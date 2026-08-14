@@ -219,6 +219,13 @@ export default function Sources() {
                 <td className="mono">{s.last_message_at ? new Date(s.last_message_at).toLocaleString() : "—"}</td>
                 <td className="mono">{s.last_error ?? "—"}</td>
                 <td className="btn-row">
+                  <a
+                    className="btn btn-sm btn-ghost"
+                    href={`#/search?source=${s.id}`}
+                    title="Browse all indexed messages from this source"
+                  >
+                    Browse
+                  </a>
                   <button className={`btn btn-sm ${s.enabled ? "btn-ghost" : ""}`} onClick={() => toggle(s)}>
                     {s.enabled ? "Pause" : "Enable"}
                   </button>

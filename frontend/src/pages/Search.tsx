@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import type { SearchResult, Source } from "../types";
 
@@ -19,11 +20,52 @@ export default function Search() {
   const [detail, setDetail] = useState<SearchResult | null>(null);
   const [rules, setRules] = useState<{ id: number; name: string }[]>([]);
   const [ruleId, setRuleId] = useState("");
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
     void api.sources().then((r) => setSources(r.items)).catch(() => {});
     void api.rules().then((r) => setRules(r.items.map((x) => ({ id: x.id, name: x.name })))).catch(() => {});
+    // Browse mode: a ?source= param (from the Sources page) preselects the
+    // channel; an empty query then shows ALL indexed messages, newest first.
+    const sourceParam = searchParams.get("source");
+    if (sourceParam) {
+      setSourceId(sourceParam);
+      void runOnce(sourceParam);
+    } else {
+      void runOnce(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const runOnce = useCallback(
+    async (sourceOverride: string | null) => {
+      setBusy(true);
+      setError(null);
+      try {
+        const r = await api.search({
+          q: q || undefined,
+          source_id: sourceOverride || sourceId || undefined,
+          start_time: start ? new Date(start).toISOString() : undefined,
+          end_time: end ? new Date(end).toISOString() : undefined,
+          rule_id: ruleId || undefined,
+          indicator_type: indicatorType || undefined,
+          message_state: messageState || undefined,
+          alert_state: alertState || undefined,
+          limit: 50,
+          offset: 0,
+        });
+        setItems(r.items);
+        setTotal(r.total);
+        setOffset(0);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
 
   const run = useCallback(
     async (off = 0) => {
@@ -108,7 +150,11 @@ export default function Search() {
         </select>
       </div>
 
-      {items.length === 0 && !busy && <div className="empty">No messages match. Try different terms or filters.</div>}
+      {items.length === 0 && !busy && (
+        <div className="empty">
+          {q ? "No messages match. Try different terms or filters." : "No messages indexed for these filters yet — add or re-index a source to see history."}
+        </div>
+      )}
 
       {items.map((m) => (
         <div key={m.id} className="alert-row" onClick={() => setDetail(m)}>
