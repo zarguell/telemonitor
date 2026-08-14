@@ -41,7 +41,7 @@ passes them through to the Astro build.
 | API | Python FastAPI | Auth/RBAC, configuration, query API, orchestration |
 | Collector | Python Telethon (or built-in simulator) | Account connection, auth flow, discovery, new-message events |
 | Workers | Procrastinate (on PostgreSQL) | Realtime processing, alert delivery, backfill, maintenance |
-| Database | PostgreSQL 16 (single instance) | Operational state, messages, search, queue, rules, alerts, audits |
+| Database | PostgreSQL 18 (single instance) | Operational state, messages, search, queue, rules, alerts, audits |
 | Migrations | Alembic | Versioned schema |
 
 Queue layout (Procrastinate, backed by the same PostgreSQL):

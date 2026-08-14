@@ -15,7 +15,7 @@ mirrors the production topology:
 
 | Service | Role |
 |---|---|
-| `db` | PostgreSQL 16 (single instance) |
+| `db` | PostgreSQL 18 (single instance) |
 | `api` | FastAPI — auth/RBAC, configuration, query API, orchestration |
 | `collector` | Telethon (or simulator) — account connection, discovery, new-message events |
 | `worker` | Procrastinate workers — realtime processing, alert delivery, backfill, maintenance |
