@@ -18,3 +18,4 @@ pgdata/
 .vscode/
 *.session
 scripts/.webhook_payloads.log
+*.tsbuildinfo
