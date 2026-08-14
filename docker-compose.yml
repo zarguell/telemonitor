@@ -1,0 +1,98 @@
+services:
+  db:
+    # SHA-pinned digest (PostgreSQL 18-alpine). Refresh with:
+    #   docker buildx imagetools inspect postgres:18-alpine
+    # NOTE: PG18 changed the volume layout to /var/lib/postgresql/<major>/docker
+    # (mount target is now /var/lib/postgresql, NOT .../data).
+    image: postgres:18-alpine@sha256:a1d02e4bd40c94d3bf2bdd3678c137388e76d9efcd23c285e9429d336a834b44
+    environment:
+      POSTGRES_USER: telemonitor
+      POSTGRES_PASSWORD: telemonitor
+      POSTGRES_DB: telemonitor
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telemonitor -d telemonitor"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    build: ./backend
+    command: sh -c "alembic upgrade head && python -m app.procrastinate_setup"
+    environment: &backend_env
+      DATABASE_URL: postgresql://telemonitor:telemonitor@db:5432/telemonitor
+      TM_DATABASE_URL: postgresql+psycopg://telemonitor:telemonitor@db:5432/telemonitor
+      # No default credentials exist. All secrets come from the gitignored
+      # .env (see .env.example) — compose fails fast if any is missing.
+      TM_SECRET_KEY: ${TM_SECRET_KEY:?set TM_SECRET_KEY in .env (see .env.example)}
+      TM_AUTH_SECRET: ${TM_AUTH_SECRET:?set TM_AUTH_SECRET in .env}
+      TM_COLLECTOR_CONTROL_TOKEN: ${TM_COLLECTOR_CONTROL_TOKEN:?set TM_COLLECTOR_CONTROL_TOKEN in .env}
+      TM_SEED_ADMIN_PASSWORD: ${TM_SEED_ADMIN_PASSWORD:?set TM_SEED_ADMIN_PASSWORD in .env}
+      TM_SIMULATE_TELEGRAM: ${TM_SIMULATE_TELEGRAM:-1}
+      TM_COLLECTOR_CONTROL_URL: http://collector:9001
+      # E2E only: lets the alert worker reach the host webhook receiver.
+      TM_ALLOWED_WEBHOOK_HOSTS: host.docker.internal
+      TM_MEDIA_STORE: local
+      TM_MEDIA_DIR: /data/media
+      TM_REDACT_LOGGING: "1"
+      TM_ENVIRONMENT: development
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment: *backend_env
+    volumes:
+      - mediadata:/data/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/v1/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  collector:
+    build: ./backend
+    command: python -m app.collector_entry
+    environment: *backend_env
+    volumes:
+      - mediadata:/data/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      # Internal control API (sim injection/testing only). Do NOT expose in production.
+      - "127.0.0.1:9001:9001"
+
+  worker:
+    build: ./backend
+    command: python -m app.worker
+    environment: *backend_env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:
+  mediadata:

@@ -1,0 +1,323 @@
+import React, { useCallback, useEffect, useState } from "react";
+import { api, ApiError } from "../api";
+import type { DiscoveredSource, Source } from "../types";
+
+const BACKFILL_MODES = [
+  { value: "none", label: "No history" },
+  { value: "last_24h", label: "Last 24 hours" },
+  { value: "last_7d", label: "Last 7 days" },
+  { value: "last_30d", label: "Last 30 days" },
+  { value: "custom", label: "Custom date" },
+];
+
+export default function Sources() {
+  const [monitored, setMonitored] = useState<Source[]>([]);
+  const [discovered, setDiscovered] = useState<DiscoveredSource[]>([]);
+  const [filter, setFilter] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState<DiscoveredSource | null>(null);
+  const [backfill, setBackfill] = useState("last_24h");
+  const [customDate, setCustomDate] = useState("");
+  const [label, setLabel] = useState("");
+  const [reindexing, setReindexing] = useState<Source | null>(null);
+  const [reindexMode, setReindexMode] = useState("last_24h");
+  const [reindexDate, setReindexDate] = useState("");
+  const [reindexBusy, setReindexBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    let discError: string | null = null;
+    try {
+      const [m, d] = await Promise.all([
+        api.sources(),
+        api.discovered().catch((e) => {
+          discError = e instanceof ApiError ? e.detail : String(e);
+          return [];
+        }),
+      ]);
+      setMonitored(m.items);
+      setDiscovered(d);
+      setDiscoveryError(discError);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const t = setInterval(() => void load(), 8000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const addSource = async () => {
+    if (!adding) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const body: Record<string, unknown> = {
+        telegram_chat_id: adding.chat_id,
+        title: adding.title,
+        username: adding.username,
+        type: adding.type,
+        enabled: true,
+        label: label || undefined,
+        backfill: {
+          mode: backfill,
+          ...(backfill === "custom" ? { custom_start: new Date(customDate).toISOString() } : {}),
+        },
+      };
+      await api.createSource(body);
+      setAdding(null);
+      setLabel("");
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggle = async (s: Source) => {
+    try {
+      await api.patchSource(s.id, { enabled: !s.enabled });
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : String(e));
+    }
+  };
+
+  const startReindex = async () => {
+    if (!reindexing) return;
+    setReindexBusy(true);
+    setError(null);
+    try {
+      await api.patchSource(reindexing.id, {
+        backfill: {
+          mode: reindexMode,
+          ...(reindexMode === "custom" ? { custom_start: new Date(reindexDate).toISOString() } : {}),
+        },
+      });
+      setReindexing(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : String(e));
+    } finally {
+      setReindexBusy(false);
+    }
+  };
+
+  const remove = async (s: Source) => {
+    if (!window.confirm(`Remove "${s.title}" from the allowlist? Messages for this source will be deleted.`)) return;
+    try {
+      await api.deleteSource(s.id);
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : String(e));
+    }
+  };
+
+  const filtered = discovered.filter(
+    (d) =>
+      !d.allowlisted &&
+      (d.title.toLowerCase().includes(filter.toLowerCase()) ||
+        (d.username ?? "").toLowerCase().includes(filter.toLowerCase()) ||
+        d.type.includes(filter.toLowerCase()))
+  );
+
+  const statusBadge = (s: string) => {
+    const cls = s === "live" ? "green" : s === "backfilling" ? "yellow" : s === "error" ? "red" : s === "paused" ? "" : "blue";
+    return <span className={`badge ${cls}`}>{s}</span>;
+  };
+
+  return (
+    <div>
+      <h1>Sources</h1>
+      <p className="page-sub">
+        Channels are only monitored after an operator explicitly adds them to the allowlist. The collector
+        ignores everything else.
+      </p>
+      {error && <div className="error-box">{error}</div>}
+
+      <div className="card">
+        <div className="card-title">
+          <span>Accessible sources</span>
+          <input
+            placeholder="Filter by title, username, type…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            style={{ width: 260 }}
+          />
+        </div>
+        {discoveryError && (
+          <div className="warn-box">Discovery unavailable: {discoveryError}</div>
+        )}
+        {!discoveryError && filtered.length === 0 && (
+          <div className="empty">No additional accessible sources — allowlisted sources are shown below</div>
+        )}
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Username</th>
+              <th>Type</th>
+              <th>Last activity</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((d) => (
+              <tr key={d.chat_id}>
+                <td>{d.title}</td>
+                <td className="mono">{d.username ?? "—"}</td>
+                <td>{d.type}</td>
+                <td className="mono">{d.last_activity_at ? new Date(d.last_activity_at).toLocaleString() : "—"}</td>
+                <td>
+                  <button className="btn btn-sm" onClick={() => setAdding(d)}>
+                    Add to monitoring
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card">
+        <div className="card-title">
+          <span>Monitored sources ({monitored.length})</span>
+        </div>
+        {monitored.length === 0 && <div className="empty">Nothing allowlisted yet</div>}
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Chat ID</th>
+              <th>Status</th>
+              <th>Backfill</th>
+              <th>Progress</th>
+              <th>Last message</th>
+              <th>Error</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {monitored.map((s) => (
+              <tr key={s.id}>
+                <td>
+                  {s.title}
+                  {s.label && <div className="muted">{s.label}</div>}
+                </td>
+                <td className="mono">{s.telegram_chat_id}</td>
+                <td>{statusBadge(s.status)}</td>
+                <td className="mono">{s.backfill_mode}</td>
+                <td>
+                  {s.backfill_total ? `${s.backfill_progress}%` : "—"}
+                  {s.backfill_error && <div className="muted red">{s.backfill_error}</div>}
+                </td>
+                <td className="mono">{s.last_message_at ? new Date(s.last_message_at).toLocaleString() : "—"}</td>
+                <td className="mono">{s.last_error ?? "—"}</td>
+                <td className="btn-row">
+                  <a
+                    className="btn btn-sm btn-ghost"
+                    href={`#/search?source=${s.id}`}
+                    title="Browse all indexed messages from this source"
+                  >
+                    Browse
+                  </a>
+                  <button className={`btn btn-sm ${s.enabled ? "btn-ghost" : ""}`} onClick={() => toggle(s)}>
+                    {s.enabled ? "Pause" : "Enable"}
+                  </button>
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    disabled={s.status === "backfilling"}
+                    onClick={() => { setReindexing(s); setReindexMode("last_24h"); setReindexDate(""); }}
+                    title={s.status === "backfilling" ? "A backfill is already running" : "Fetch past messages as a one-shot job"}
+                  >
+                    {s.status === "backfilling" ? "Indexing…" : "Re-index history"}
+                  </button>
+                  <button className="btn btn-sm btn-danger" onClick={() => void remove(s)}>
+                    Remove
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {reindexing && (
+        <div className="modal-backdrop" onClick={() => setReindexing(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Re-index history — “{reindexing.title}”</h2>
+            <p className="muted">
+              Runs a one-shot backfill job for the selected window. Live monitoring keeps
+              working; existing messages are re-ingested idempotently and will be re-processed.
+            </p>
+            <label>Historical window</label>
+            <select value={reindexMode} onChange={(e) => setReindexMode(e.target.value)}>
+              {BACKFILL_MODES.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+            {reindexMode === "custom" && (
+              <>
+                <label>Earliest timestamp</label>
+                <input type="datetime-local" value={reindexDate} onChange={(e) => setReindexDate(e.target.value)} />
+              </>
+            )}
+            <div className="btn-row" style={{ marginTop: 16 }}>
+              <button
+                className="btn"
+                disabled={reindexBusy || (reindexMode === "custom" && !reindexDate)}
+                onClick={() => void startReindex()}
+              >
+                {reindexBusy ? "Starting…" : "Start one-shot backfill"}
+              </button>
+              <button className="btn btn-ghost" onClick={() => setReindexing(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {adding && (
+        <div className="modal-backdrop" onClick={() => setAdding(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Approve & monitor “{adding.title}”</h2>
+            <p className="muted">
+              Confirm this source is approved for monitoring by your organization. Telegram chat ID{" "}
+              <span className="mono">{adding.chat_id}</span>
+            </p>
+            <label>Source label (optional)</label>
+            <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Partner feed — approved" />
+            <label>Historical backfill</label>
+            <select value={backfill} onChange={(e) => setBackfill(e.target.value)}>
+              {BACKFILL_MODES.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            {backfill === "custom" && (
+              <>
+                <label>Earliest timestamp</label>
+                <input type="datetime-local" value={customDate} onChange={(e) => setCustomDate(e.target.value)} />
+              </>
+            )}
+            <div className="btn-row" style={{ marginTop: 16 }}>
+              <button className="btn" disabled={busy || (backfill === "custom" && !customDate)} onClick={() => void addSource()}>
+                {busy ? "Adding…" : "Confirm and add to allowlist"}
+              </button>
+              <button className="btn btn-ghost" onClick={() => setAdding(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
