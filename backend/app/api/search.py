@@ -40,10 +40,10 @@ def _build_query(
     stmt = select(Message).join(Message.source)
     if q:
         needle = normalize_text(q)
-        like = f"%{needle}%"
         stmt = stmt.where(
             or_(
-                Message.normalized_text.ilike(like),
+                # autoescape=True treats %/_/\ in the query literally
+                Message.normalized_text.contains(needle, autoescape=True),
                 func.to_tsvector("simple", func.coalesce(Message.normalized_text, "")).op("@@")(  # type: ignore[attr-defined]
                     func.plainto_tsquery("simple", needle)
                 ),
@@ -133,6 +133,7 @@ def search(
                 "state": m.state,
                 "snippet": snippet,
                 "text_preview": (m.original_text or "")[:300],
+                "normalized_text": (m.normalized_text or "")[:500],
                 "indicators": [
                     {
                         "type": i.type,

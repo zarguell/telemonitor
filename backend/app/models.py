@@ -82,7 +82,6 @@ class EventType:
     CREATED = "created"
     EDITED = "edited"
     DELETED = "deleted"
-    REPROCESSED = "reprocessed"
 
 
 class Severity:
@@ -147,6 +146,7 @@ class User(Base):
     display_name: Mapped[str | None] = mapped_column(String(128))
     email: Mapped[str | None] = mapped_column(String(256))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -207,7 +207,9 @@ class Source(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
-    messages: Mapped[list["Message"]] = relationship(back_populates="source")
+    messages: Mapped[list["Message"]] = relationship(
+        back_populates="source", cascade="all, delete-orphan", passive_deletes=True
+    )
 
     __table_args__ = (
         Index("ix_sources_enabled", "enabled"),
@@ -330,6 +332,7 @@ class Alert(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     rule_id: Mapped[int | None] = mapped_column(ForeignKey("rules.id", ondelete="SET NULL"))
+    rule_version: Mapped[int | None] = mapped_column(Integer)  # snapshot at match time
     source_id: Mapped[int | None] = mapped_column(ForeignKey("sources.id", ondelete="SET NULL"))
     dedupe_key: Mapped[str] = mapped_column(String(512), nullable=False)
     severity: Mapped[str] = mapped_column(String(16), nullable=False, default=Severity.MEDIUM)

@@ -51,6 +51,7 @@ def create_token(user: User) -> str:
         "sub": str(user.id),
         "username": user.username,
         "role": user.role,
+        "tv": user.token_version,
         "iat": now,
         "exp": now + timedelta(hours=settings.auth_ttl_hours),
     }
@@ -88,9 +89,16 @@ def require_auth(
     payload = decode_token(tm_token)
     if not payload:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired session")
-    user = db.scalar(select(User).where(User.id == int(payload["sub"])))
+    try:
+        user_id = int(payload["sub"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session")
+    user = db.scalar(select(User).where(User.id == user_id))
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account disabled")
+    # Token versioning: logout/password change invalidates previously issued tokens.
+    if payload.get("tv") != user.token_version:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session revoked")
     return AuthContext(user=user, token_payload=payload, request=request)
 
 

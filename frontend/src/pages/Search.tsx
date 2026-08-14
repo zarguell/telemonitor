@@ -15,21 +15,27 @@ export default function Search() {
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<SearchResult | null>(null);
+  const [rules, setRules] = useState<{ id: number; name: string }[]>([]);
+  const [ruleId, setRuleId] = useState("");
 
   useEffect(() => {
     void api.sources().then((r) => setSources(r.items)).catch(() => {});
+    void api.rules().then((r) => setRules(r.items.map((x) => ({ id: x.id, name: x.name })))).catch(() => {});
   }, []);
 
   const run = useCallback(
     async (off = 0) => {
       setBusy(true);
+      setError(null);
       try {
         const r = await api.search({
           q: q || undefined,
           source_id: sourceId || undefined,
           start_time: start ? new Date(start).toISOString() : undefined,
           end_time: end ? new Date(end).toISOString() : undefined,
+          rule_id: ruleId || undefined,
           indicator_type: indicatorType || undefined,
           message_state: messageState || undefined,
           alert_state: alertState || undefined,
@@ -39,17 +45,20 @@ export default function Search() {
         setItems(r.items);
         setTotal(r.total);
         setOffset(off);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
       } finally {
         setBusy(false);
       }
     },
-    [q, sourceId, start, end, indicatorType, messageState, alertState]
+    [q, sourceId, start, end, ruleId, indicatorType, messageState, alertState]
   );
 
   return (
     <div>
       <h1>Search</h1>
       <p className="page-sub">Full-text and substring search over normalized message text ({total} results)</p>
+      {error && <div className="error-box">{error}</div>}
 
       <div className="toolbar">
         <input
@@ -89,6 +98,12 @@ export default function Search() {
           <option value="">Any alert state</option>
           {["open", "acknowledged", "resolved", "false_positive"].map((s) => (
             <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <select value={ruleId} onChange={(e) => setRuleId(e.target.value)}>
+          <option value="">Any rule</option>
+          {rules.map((r) => (
+            <option key={r.id} value={r.id}>{r.name}</option>
           ))}
         </select>
       </div>
@@ -185,6 +200,14 @@ export default function Search() {
             <div className="card" style={{ background: "var(--bg)", whiteSpace: "pre-wrap" }}>
               {detail.text_preview}
             </div>
+            {detail.normalized_text && (
+              <>
+                <h3>Normalized text</h3>
+                <div className="card mono" style={{ background: "var(--bg)", whiteSpace: "pre-wrap" }}>
+                  {detail.normalized_text}
+                </div>
+              </>
+            )}
 
             <h3>Extracted indicators</h3>
             {detail.indicators.length === 0 && <div className="muted">None</div>}

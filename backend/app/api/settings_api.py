@@ -61,8 +61,14 @@ def update_settings(
         if d.type not in ("none", "webhook", "telegram_bot"):
             raise HTTPException(status_code=400, detail="type must be none|webhook|telegram_bot")
         if d.type == "webhook":
-            if not d.url or not d.url.startswith(("http://", "https://")):
+            if not d.url:
                 raise HTTPException(status_code=400, detail="webhook url required (http/https)")
+            from ..services.delivery import validate_webhook_url
+
+            try:
+                validate_webhook_url(d.url)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
             dest = {"type": "webhook", "url": d.url}
         elif d.type == "telegram_bot":
             if not d.token or not d.chat_id:

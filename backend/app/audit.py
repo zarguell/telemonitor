@@ -10,6 +10,7 @@ from .models import AuditEvent, AppSetting, User
 
 # Actions we audit
 ACTION_LOGIN = "auth.login"
+ACTION_LOGIN_FAILED = "auth.login_failed"
 ACTION_LOGOUT = "auth.logout"
 ACTION_TELEGRAM_INIT = "telegram.initialize"
 ACTION_TELEGRAM_PHONE = "telegram.phone"
@@ -19,6 +20,7 @@ ACTION_TELEGRAM_CODE_SUBMITTED = "telegram.code_submitted"  # sanitized: no code
 ACTION_TELEGRAM_2FA_SUBMITTED = "telegram.2fa_submitted"  # sanitized: no password value
 ACTION_SOURCE_ADD = "source.add"
 ACTION_SOURCE_UPDATE = "source.update"
+ACTION_SOURCE_DELETE = "source.delete"
 ACTION_SOURCE_ENABLE = "source.enable"
 ACTION_SOURCE_PAUSE = "source.pause"
 ACTION_RULE_CREATE = "rule.create"
@@ -37,6 +39,7 @@ ACTION_MAINTENANCE_RUN = "maintenance.run"
 _ACTIONS = frozenset(
     [
         ACTION_LOGIN,
+        ACTION_LOGIN_FAILED,
         ACTION_LOGOUT,
         ACTION_TELEGRAM_INIT,
         ACTION_TELEGRAM_PHONE,
@@ -46,6 +49,7 @@ _ACTIONS = frozenset(
         ACTION_TELEGRAM_2FA_SUBMITTED,
         ACTION_SOURCE_ADD,
         ACTION_SOURCE_UPDATE,
+        ACTION_SOURCE_DELETE,
         ACTION_SOURCE_ENABLE,
         ACTION_SOURCE_PAUSE,
         ACTION_RULE_CREATE,
@@ -105,11 +109,11 @@ def list_audit(
     q = select(AuditEvent)
     count_q = select(AuditEvent.id)
     if actor:
-        q = q.where(AuditEvent.actor_username == actor)
-        count_q = count_q.where(AuditEvent.actor_username == actor)
+        q = q.where(AuditEvent.actor_username.ilike(f"%{actor}%"))
+        count_q = count_q.where(AuditEvent.actor_username.ilike(f"%{actor}%"))
     if action:
-        q = q.where(AuditEvent.action == action)
-        count_q = count_q.where(AuditEvent.action == action)
+        q = q.where(AuditEvent.action.ilike(f"%{action}%"))
+        count_q = count_q.where(AuditEvent.action.ilike(f"%{action}%"))
     if object_type:
         q = q.where(AuditEvent.object_type == object_type)
         count_q = count_q.where(AuditEvent.object_type == object_type)

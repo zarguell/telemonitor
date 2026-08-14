@@ -24,6 +24,7 @@ export default function Alerts() {
       const r = await api.alerts({ state: state || undefined, severity: severity || undefined, limit: 100 });
       setItems(r.items);
       setTotal(r.total);
+      setError(null);
     } catch (e) {
       setError(String(e));
     }

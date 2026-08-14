@@ -97,6 +97,7 @@ export interface SearchResult {
   state: string;
   snippet: string;
   text_preview: string;
+  normalized_text?: string;
   indicators: Indicator[];
   rule_matches: { rule_id: number; rule_version: number }[];
   alerts: { id: number; state: string; severity: string }[];
@@ -164,7 +165,10 @@ export interface Overview {
   enabled_sources: number;
   backfill_in_progress: number;
   messages_24h: number;
+  processed_messages_24h?: number;
   failed_messages_24h: number;
+  alerts_created_24h?: number;
+  alerts_delivered_24h?: number;
   open_alerts: Record<string, number>;
   open_alert_total: number;
   recent_errors: { kind: string; source?: string; alert_id?: number; error?: string }[];

@@ -85,6 +85,16 @@ export default function Rules() {
     }
   };
 
+  const remove = async (r: Rule) => {
+    if (!window.confirm(`Delete rule "${r.name}"? Existing alerts are preserved.`)) return;
+    try {
+      await api.deleteRule(r.id);
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : String(e));
+    }
+  };
+
   const testRule = async () => {
     if (!editing || !sampleText) return;
     setError(null);
@@ -150,6 +160,9 @@ export default function Rules() {
                   </button>
                   <button className="btn btn-sm btn-ghost" onClick={() => void toggle(r)}>
                     {r.enabled ? "Disable" : "Enable"}
+                  </button>
+                  <button className="btn btn-sm btn-danger" onClick={() => void remove(r)}>
+                    Delete
                   </button>
                 </td>
               </tr>

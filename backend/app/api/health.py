@@ -41,6 +41,7 @@ def _queue_stats(db) -> dict:
 
 
 def _collector_state(db) -> dict:
+    """Sanitized collector state for the public health endpoint (no error text)."""
     tg = db.get(TelegramConfiguration, 1)
     if tg is None:
         return {"state": "not_configured", "heartbeat": None, "connected": False}
@@ -48,7 +49,6 @@ def _collector_state(db) -> dict:
     fresh = tg.collector_heartbeat_at and tg.collector_heartbeat_at >= datetime.now(timezone.utc) - timedelta(seconds=90)
     return {
         "state": tg.status,
-        "detail": tg.status_detail,
         "heartbeat": tg.collector_heartbeat_at.isoformat() if tg.collector_heartbeat_at else None,
         "worker": hb.status if hb else "unknown",
         "connected": bool(fresh and tg.status == "authorized"),

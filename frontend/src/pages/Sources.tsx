@@ -15,6 +15,7 @@ export default function Sources() {
   const [discovered, setDiscovered] = useState<DiscoveredSource[]>([]);
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState<DiscoveredSource | null>(null);
   const [backfill, setBackfill] = useState("last_24h");
@@ -22,10 +23,19 @@ export default function Sources() {
   const [label, setLabel] = useState("");
 
   const load = useCallback(async () => {
+    let discError: string | null = null;
     try {
-      const [m, d] = await Promise.all([api.sources(), api.discovered().catch(() => [])]);
+      const [m, d] = await Promise.all([
+        api.sources(),
+        api.discovered().catch((e) => {
+          discError = e instanceof ApiError ? e.detail : String(e);
+          return [];
+        }),
+      ]);
       setMonitored(m.items);
       setDiscovered(d);
+      setDiscoveryError(discError);
+      setError(null);
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : String(e));
     }
@@ -74,6 +84,16 @@ export default function Sources() {
     }
   };
 
+  const remove = async (s: Source) => {
+    if (!window.confirm(`Remove "${s.title}" from the allowlist? Messages for this source will be deleted.`)) return;
+    try {
+      await api.deleteSource(s.id);
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : String(e));
+    }
+  };
+
   const filtered = discovered.filter(
     (d) =>
       !d.allowlisted &&
@@ -106,7 +126,12 @@ export default function Sources() {
             style={{ width: 260 }}
           />
         </div>
-        {filtered.length === 0 && <div className="empty">No accessible sources (authorize the Telegram account first)</div>}
+        {discoveryError && (
+          <div className="warn-box">Discovery unavailable: {discoveryError}</div>
+        )}
+        {!discoveryError && filtered.length === 0 && (
+          <div className="empty">No accessible sources (authorize the Telegram account first)</div>
+        )}
         <table>
           <thead>
             <tr>
@@ -118,7 +143,7 @@ export default function Sources() {
             </tr>
           </thead>
           <tbody>
-            {filtered.slice(0, 100).map((d) => (
+            {filtered.map((d) => (
               <tr key={d.chat_id}>
                 <td>{d.title}</td>
                 <td className="mono">{d.username ?? "—"}</td>
@@ -169,9 +194,12 @@ export default function Sources() {
                 </td>
                 <td className="mono">{s.last_message_at ? new Date(s.last_message_at).toLocaleString() : "—"}</td>
                 <td className="mono">{s.last_error ?? "—"}</td>
-                <td>
+                <td className="btn-row">
                   <button className={`btn btn-sm ${s.enabled ? "btn-ghost" : ""}`} onClick={() => toggle(s)}>
                     {s.enabled ? "Pause" : "Enable"}
+                  </button>
+                  <button className="btn btn-sm btn-danger" onClick={() => void remove(s)}>
+                    Remove
                   </button>
                 </td>
               </tr>

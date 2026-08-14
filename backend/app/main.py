@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .audit import ensure_seeded_settings
-from .config import settings
+from .config import settings, validate_config
 from .db import db_session
 from .redact import install_redaction
 from .security import hash_password
@@ -18,30 +18,37 @@ logger = logging.getLogger("telemonitor.api")
 
 
 def _seed_users() -> None:
-    from sqlalchemy import select
+    """Bootstrap demo users ONLY on a fresh database (users table empty).
+
+    Deleted demo users are never resurrected: once any user exists, seeding is
+    skipped regardless of environment.
+    """
+    from sqlalchemy import func, select
 
     from .models import Roles, User
 
     db = db_session()
     try:
+        existing = db.scalar(select(func.count(User.id))) or 0
+        if existing > 0:
+            return
         defaults = [
             (settings.seed_admin_username, settings.seed_admin_password, Roles.ADMIN, "Administrator", settings.seed_admin_email),
             ("operator", "operator123", Roles.OPERATOR, "Operator", "operator@example.invalid"),
             ("analyst", "analyst123", Roles.ANALYST, "Analyst", "analyst@example.invalid"),
         ]
         for username, password, role, display, email in defaults:
-            if db.scalar(select(User).where(User.username == username)) is None:
-                db.add(
-                    User(
-                        username=username,
-                        password_hash=hash_password(password),
-                        role=role,
-                        display_name=display,
-                        email=email,
-                    )
+            db.add(
+                User(
+                    username=username,
+                    password_hash=hash_password(password),
+                    role=role,
+                    display_name=display,
+                    email=email,
                 )
+            )
         db.commit()
-        logger.info("seeded default users")
+        logger.info("seeded default users (fresh database only)")
     finally:
         db.close()
 
@@ -53,6 +60,9 @@ async def lifespan(app: FastAPI):
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    problems = validate_config(settings)
+    if problems:
+        raise RuntimeError("Refusing to start with insecure configuration: " + "; ".join(problems))
     _seed_users()
     db = db_session()
     try:
@@ -66,7 +76,16 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Telemonitor API", version="1.0.0", lifespan=lifespan)
+    # OpenAPI docs are an information-disclosure surface; only expose them in dev.
+    docs_enabled = settings.environment == "development"
+    app = FastAPI(
+        title="Telemonitor API",
+        version="1.0.0",
+        lifespan=lifespan,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url="/openapi.json" if docs_enabled else None,
+    )
 
     app.add_middleware(
         CORSMiddleware,

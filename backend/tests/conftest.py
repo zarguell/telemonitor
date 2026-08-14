@@ -11,7 +11,7 @@ os.environ.setdefault("TM_PROCRASTINATE_DATABASE_URL", "postgresql://telemonitor
 os.environ.setdefault("DATABASE_URL", "postgresql://telemonitor:telemonitor@localhost:5432/telemonitor_test")
 os.environ.setdefault(
     "TM_SECRET_KEY",
-    "test-key-kiXwYpS3vN7qL9tB2mR4cE6gH8jA1dF5uZ0xW3oV6yS=",
+    "kiXwYpS3vN7qL9tB2mR4cE6gH8jA1dF5uZ0xW3oV6yS=",
 )
 os.environ.setdefault("TM_AUTH_SECRET", "test-auth-secret")
 os.environ.setdefault("TM_SIMULATE_TELEGRAM", "1")
@@ -27,7 +27,8 @@ from app.db import engine  # noqa: E402
 _TRUNCATE = (
     "TRUNCATE telegram_configuration, worker_heartbeats, alert_messages, alert_deliveries, "
     "alerts, rule_matches, rules, indicators, message_events, messages, sources, "
-    "audit_events, app_settings, users RESTART IDENTITY CASCADE"
+    "audit_events, app_settings, users, procrastinate_jobs, procrastinate_events, "
+    "procrastinate_workers RESTART IDENTITY CASCADE"
 )
 
 
@@ -36,6 +37,9 @@ def migrated_db():
     cfg = Config(str(BACKEND_DIR / "alembic.ini"))
     cfg.set_main_option("sqlalchemy.url", os.environ["TM_DATABASE_URL"])
     command.upgrade(cfg, "head")
+    from app.jobs import ensure_open
+
+    ensure_open()  # creates the procrastinate queue schema in the test DB
     yield
     engine.dispose()
 

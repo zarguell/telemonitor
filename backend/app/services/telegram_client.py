@@ -164,8 +164,8 @@ def _message_to_dict(m) -> dict:
         "text": m.message or "",
         "sender_id": sender_id,
         "reply_to_msg_id": m.reply_to_msg_id,
-        "fwd_from_id": fwd_from_id,
-        "fwd_from_name": fwd_from_name,
+        "forward_from_id": fwd_from_id,
+        "forward_from_name": fwd_from_name,
         "media_type": media_type,
         "media_meta": media_meta,
         "edit_date": m.edit_date,
@@ -290,16 +290,22 @@ class TelethonService(TelegramServiceProtocol):
             db.close()
 
     async def initialize(self, api_id: str, api_hash: str) -> dict:
+        # Re-initializing must tear down any previously connected client and
+        # invalidate the stored session, otherwise the old account keeps
+        # delivering events while the status claims waiting_phone.
+        await self.stop()
         self._api_id, self._api_hash = api_id, api_hash
+        self._phone = None
         db = self._db()
         try:
-            # persist encrypted credential refs, no session yet
             cfg = load_tg_config(db)
             if cfg is None:
                 cfg = TelegramConfiguration(id=1)
                 db.add(cfg)
             cfg.api_id_enc = encrypt_secret(api_id)
             cfg.api_hash_enc = encrypt_secret(api_hash)
+            cfg.session_enc = None
+            cfg.connected_account = None
             cfg.session_key_ref = key_fingerprint()
             set_status(db, TelegramStatus.WAITING_PHONE, "credentials stored; enter phone number")
         finally:
@@ -307,8 +313,15 @@ class TelethonService(TelegramServiceProtocol):
         return self.status()
 
     async def submit_phone(self, phone: str) -> dict:
+        if not self._api_id or not self._api_hash:
+            db = self._db()
+            try:
+                set_status(db, TelegramStatus.INIT_REQUIRED, "credentials not initialized; run initialize first")
+            finally:
+                db.close()
+            return self.status()
         if self._client is None or self._client.is_connected() is False:
-            client = self._client_for(self._api_id or "0", self._api_hash or "")
+            client = self._client_for(self._api_id, self._api_hash)
             self._client = client
             await client.connect()
         self._phone = phone
@@ -329,20 +342,34 @@ class TelethonService(TelegramServiceProtocol):
         return self.status()
 
     async def submit_code(self, code: str) -> dict:
-        assert self._client is not None and self._phone is not None
+        from telethon.errors import SessionPasswordNeededError  # type: ignore
+
+        if self._client is None or self._phone is None:
+            db = self._db()
+            try:
+                set_status(db, TelegramStatus.WAITING_PHONE, "phone number required before code")
+            finally:
+                db.close()
+            return self.status()
         try:
             await self._client.sign_in(self._phone, code)
+        except SessionPasswordNeededError:
+            await self._announce_status(TelegramStatus.WAITING_2FA, "two-factor password required")
+            return self.status()
         except Exception as e:  # noqa: BLE001
-            if type(e).__name__ == "SessionPasswordNeededError":
-                await self._announce_status(TelegramStatus.WAITING_2FA, "two-factor password required")
-                return self.status()
             await self._announce_status(TelegramStatus.ERROR, error=str(e)[:300])
             return self.status()
         await self._finalize_authorized()
         return self.status()
 
     async def submit_password(self, password: str) -> dict:
-        assert self._client is not None
+        if self._client is None:
+            db = self._db()
+            try:
+                set_status(db, TelegramStatus.INIT_REQUIRED, "no active authorization flow")
+            finally:
+                db.close()
+            return self.status()
         try:
             await self._client.sign_in(password=password)
         except Exception as e:  # noqa: BLE001
@@ -383,6 +410,15 @@ class TelethonService(TelegramServiceProtocol):
         finally:
             db.close()
         return self.status()
+
+    def is_connected(self) -> bool:
+        """True when an authorized client connection is live (for heartbeat/reconnect states)."""
+        if self._client is None:
+            return False
+        try:
+            return self._client.is_connected()
+        except Exception:  # noqa: BLE001
+            return False
 
     def status(self) -> dict:
         db = self._db()

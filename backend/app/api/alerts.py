@@ -24,7 +24,7 @@ def _alert_dict(a: Alert, include_messages: bool = False) -> dict:
         "id": a.id,
         "rule_id": a.rule_id,
         "rule_name": a.rule.name if a.rule else None,
-        "rule_version": a.rule.version if a.rule else None,
+        "rule_version": a.rule_version if a.rule_version is not None else (a.rule.version if a.rule else None),
         "source_id": a.source_id,
         "source_title": a.source.title if a.source else None,
         "severity": a.severity,

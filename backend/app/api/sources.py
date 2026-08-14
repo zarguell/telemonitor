@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..audit import ACTION_SOURCE_ADD, ACTION_SOURCE_ENABLE, ACTION_SOURCE_PAUSE, ACTION_SOURCE_UPDATE, log_audit
+from ..audit import ACTION_SOURCE_ADD, ACTION_SOURCE_DELETE, ACTION_SOURCE_ENABLE, ACTION_SOURCE_PAUSE, ACTION_SOURCE_UPDATE, log_audit
 from ..config import settings
 from ..db import get_db
 from ..jobs import TASK_BACKFILL_PAGE, enqueue
@@ -51,6 +51,16 @@ class SourcePatch(BaseModel):
     status: str | None = None
 
 
+def _backfill_rate(s: Source) -> float | None:
+    """Average backfill throughput (messages/minute) while backfilling or after."""
+    if not s.backfill_total or not s.backfill_done:
+        return None
+    elapsed = (s.updated_at - s.created_at).total_seconds()
+    if elapsed <= 0:
+        return None
+    return round(60 * s.backfill_done / elapsed, 1)
+
+
 def _source_dict(s: Source) -> dict:
     return {
         "id": s.id,
@@ -70,6 +80,8 @@ def _source_dict(s: Source) -> dict:
         if s.backfill_total
         else None,
         "backfill_error": s.backfill_error,
+        "backfill_failures": s.backfill_failures,
+        "backfill_rate_per_min": _backfill_rate(s),
         "last_message_at": s.last_message_at.isoformat() if s.last_message_at else None,
         "last_success_at": s.last_success_at.isoformat() if s.last_success_at else None,
         "last_error": s.last_error,
@@ -193,22 +205,36 @@ async def patch_source(
                 source.status = SourceStatus.LIVE
         else:
             source.status = SourceStatus.PAUSED
-    if body.label is not None:
+    if body.label is not None and body.label != source.label:
         source.label = body.label
+        actions.append(ACTION_SOURCE_UPDATE)
     if body.status is not None and body.status in (SourceStatus.LIVE, SourceStatus.PAUSED, SourceStatus.ERROR):
         source.status = body.status
     if body.backfill is not None:
         mode = body.backfill.get("mode", source.backfill_mode)
+        if mode not in (BackfillMode.NONE, BackfillMode.HOURS_24, BackfillMode.DAYS_7, BackfillMode.DAYS_30, BackfillMode.CUSTOM):
+            raise HTTPException(status_code=400, detail=f"invalid backfill mode: {mode}")
         custom = None
-        if mode == BackfillMode.CUSTOM and body.backfill.get("custom_start"):
-            custom = datetime.fromisoformat(body.backfill["custom_start"].replace("Z", "+00:00"))
+        if mode == BackfillMode.CUSTOM:
+            raw = body.backfill.get("custom_start")
+            if not raw:
+                raise HTTPException(status_code=400, detail="custom_start required for custom backfill")
+            try:
+                custom = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="custom_start must be an ISO-8601 timestamp")
+            if custom > datetime.now(timezone.utc):
+                raise HTTPException(status_code=400, detail="custom_start cannot be in the future")
         source.backfill_mode = mode
         source.backfill_start = _backfill_start(mode, custom)
         source.backfill_checkpoint = None
         source.backfill_done = 0
         source.backfill_total = None
         source.backfill_error = None
-        if source.enabled and mode != BackfillMode.NONE:
+        source.backfill_failures = 0
+        # At most one active backfill per source (PRD 7.7): never enqueue a
+        # second pagination sequence while one is running.
+        if source.enabled and mode != BackfillMode.NONE and source.status != SourceStatus.BACKFILLING:
             source.status = SourceStatus.BACKFILLING
             enqueue(TASK_BACKFILL_PAGE, source_id=source.id)
     db.commit()
@@ -253,10 +279,10 @@ async def delete_source(
         db,
         actor_user_id=ctx.user.id,
         actor_username=ctx.user.username,
-        action=ACTION_SOURCE_UPDATE,
+        action=ACTION_SOURCE_DELETE,
         object_type="source",
         object_id=str(source_id),
-        detail={"deleted": True, "title": source.title},
+        detail={"title": source.title},
         ip_address=ctx.ip_address,
     )
     return {"ok": True}

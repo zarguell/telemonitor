@@ -9,6 +9,7 @@ Run from the repo root: python3 scripts/e2e.py
 """
 from __future__ import annotations
 
+import datetime
 import http.cookiejar
 import json
 import os
@@ -171,6 +172,8 @@ def main() -> None:
         ok("code -> authorized", tg.get("state") == "authorized", f"(got {tg.get('state')})")
         status = wait_until("authorized status visible", lambda: req(op, "GET", "/telegram/status", expect=None)[1], 30)
         ok("telegram status authorized", status.get("state") == "authorized")
+        st, ttest = req(op, "POST", "/telegram/test")
+        ok("test status verifies connectivity", ttest.get("ok") is True, f"(got {ttest})")
 
         print("== 4. Discovery & allowlist ==")
         st, disc = req(op, "GET", "/sources/discovered")
@@ -249,8 +252,8 @@ def main() -> None:
             90,
         )
         elapsed = time.time() - t0
-        ok(f"live message searchable in {elapsed:.1f}s", bool(found), "(>75s budget)")
-        ok("within 60s budget", elapsed <= 75, f"({elapsed:.1f}s)")
+        ok(f"live message searchable in {elapsed:.1f}s", bool(found), "(no result)")
+        ok("within 60s budget (PRD 13)", elapsed <= 60, f"({elapsed:.1f}s)")
 
         alert = wait_until(
             "alert created for rule",
@@ -282,6 +285,24 @@ def main() -> None:
         ok("dedup folded second message", detail["message_count"] >= 2, f"(count={detail['message_count']})")
         ok("no duplicate notification", len(receiver_events("alert.created")) == 1)
 
+        print("== 9b. Search filters + provenance ==")
+        st, by_rule = req(op, "GET", f"/search?rule_id={rule_id}", expect=None)
+        ok("search filter by rule_id", by_rule["total"] >= 1, f"(total={by_rule['total']})")
+        st, by_src = req(op, "GET", f"/search?source_id={src_id}", expect=None)
+        ok("search filter by source_id", by_src["total"] >= 1, f"(total={by_src['total']})")
+        st, by_range = req(
+            op,
+            "GET",
+            "/search?start_time=" + urllib.parse.quote((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=10)).isoformat()) + "&end_time=" + urllib.parse.quote(datetime.datetime.now(datetime.timezone.utc).isoformat()),
+            expect=None,
+        )
+        ok("search filter by date range", by_range["total"] >= 1, f"(total={by_range['total']})")
+        st, by_ind = req(op, "GET", "/search?indicator_type=hash", expect=None)
+        ok("search filter by indicator type", by_ind["total"] >= 1, f"(total={by_ind['total']})")
+        st, search = req(op, "GET", "/search?q=credential", expect=None)
+        ok("search results carry permalinks", search["items"][0].get("permalink") is not None, f"(items={len(search['items'])})")
+        ok("search results carry normalized_text", "normalized_text" in search["items"][0])
+
         print("== 10. Triage by analyst ==")
         st, triaged = req(an, "PATCH", f"/alerts/{alert_id}", {"state": "resolved", "note": "checked with team"})
         ok("alert resolved with note", triaged.get("state") == "resolved" and triaged.get("triage_note") == "checked with team")
@@ -312,6 +333,9 @@ def main() -> None:
         ok("source2 backfill completed after restart", resumed is not None)
         ok("source2 backfilled large window", (resumed or {}).get("backfill_done", 0) > 2500, f"(done={(resumed or {}).get('backfill_done')})")
         ok("no backfill error", not (resumed or {}).get("backfill_error"))
+        req(op, "DELETE", f"/sources/{src2_id}", expect=200)
+        st, after_del = req(op, "GET", "/sources", expect=None)
+        ok("source removed from allowlist", all(x["id"] != src2_id for x in after_del["items"]))
 
         print("== 12. Retention cleanup ==")
         psql = (
@@ -367,6 +391,16 @@ def main() -> None:
         req(op, "POST", "/telegram/code", {"code": SIM_OTP})
         status = wait_until("reconnect", lambda: req(op, "GET", "/telegram/status", expect=None)[1], 30)
         ok("reconnected after revoke", status.get("state") == "authorized")
+
+        print("== 16. Two-factor password path ==")
+        req(op, "POST", "/telegram/initialize", {"api_id": "1234567", "api_hash": "a" * 32, "acknowledgement": True})
+        req(op, "POST", "/telegram/phone", {"phone": "+15550001112"})
+        st, tg = req(op, "POST", "/telegram/code", {"code": SIM_OTP})
+        ok("2FA requested for 2FA-enabled account", tg.get("state") == "waiting_2fa", f"(got {tg.get('state')})")
+        st, tg = req(op, "POST", "/telegram/password", {"password": "sim-2fa-pass"})
+        ok("2FA password completes authorization", tg.get("state") == "authorized", f"(got {tg.get('state')})")
+        status = wait_until("2FA reauthorized", lambda: req(op, "GET", "/telegram/status", expect=None)[1], 30)
+        ok("telegram status authorized after 2FA", status.get("state") == "authorized")
 
     finally:
         receiver.terminate()

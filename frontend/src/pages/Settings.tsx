@@ -8,6 +8,7 @@ export default function Settings() {
   const [webhookUrl, setWebhookUrl] = useState("");
   const [botToken, setBotToken] = useState("");
   const [botChatId, setBotChatId] = useState("");
+  const [destDirty, setDestDirty] = useState(false);
   const [aliases, setAliases] = useState<{ alias: string; canonical?: string }[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [newUser, setNewUser] = useState({ username: "", password: "", role: "analyst" });
@@ -19,8 +20,13 @@ export default function Settings() {
       const [s, u] = await Promise.all([api.settings(), api.users()]);
       setRetention(s.retention_days);
       setDestType(String(s.alert_destination.type ?? "none"));
+      // Secrets are never returned; only the masked summary is shown.
+      setWebhookUrl(String(s.alert_destination.url ?? ""));
+      setBotChatId(String(s.alert_destination.chat_id ?? ""));
       setAliases(s.aliases ?? []);
       setUsers(u.items);
+      setDestDirty(false);
+      setError(null);
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : String(e));
     }
@@ -38,12 +44,16 @@ export default function Settings() {
         retention_days: retention,
         aliases: aliases.filter((a) => a.alias),
       };
-      if (destType === "webhook") {
-        body.alert_destination = { type: "webhook", url: webhookUrl };
-      } else if (destType === "telegram_bot") {
-        body.alert_destination = { type: "telegram_bot", token: botToken, chat_id: botChatId };
-      } else {
-        body.alert_destination = { type: "none" };
+      // Only send the destination when the operator actually edited it — the
+      // server never returns secrets, so a plain "Save" must not clobber them.
+      if (destDirty) {
+        if (destType === "webhook") {
+          body.alert_destination = { type: "webhook", url: webhookUrl };
+        } else if (destType === "telegram_bot") {
+          body.alert_destination = { type: "telegram_bot", token: botToken, chat_id: botChatId };
+        } else {
+          body.alert_destination = { type: "none" };
+        }
       }
       await api.updateSettings(body);
       setBotToken("");
@@ -106,7 +116,7 @@ export default function Settings() {
         <h2>Alert destination</h2>
         <p className="muted">One approved internal destination: webhook or Telegram bot. Testable from here.</p>
         <label>Type</label>
-        <select value={destType} onChange={(e) => setDestType(e.target.value)}>
+        <select value={destType} onChange={(e) => { setDestType(e.target.value); setDestDirty(true); }}>
           <option value="none">None</option>
           <option value="webhook">Webhook</option>
           <option value="telegram_bot">Telegram bot</option>
@@ -114,15 +124,18 @@ export default function Settings() {
         {destType === "webhook" && (
           <>
             <label>Webhook URL</label>
-            <input value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} placeholder="https://hooks.internal.example/…" />
+            <input value={webhookUrl} onChange={(e) => { setWebhookUrl(e.target.value); setDestDirty(true); }} placeholder="https://hooks.internal.example/…" />
+            <div className="muted" style={{ fontSize: 12 }}>
+              {destDirty ? "" : "Saved URL is masked for security; re-enter it only when changing the destination."}
+            </div>
           </>
         )}
         {destType === "telegram_bot" && (
           <>
             <label>Bot token</label>
-            <input type="password" value={botToken} onChange={(e) => setBotToken(e.target.value)} placeholder="stored encrypted" />
+            <input type="password" value={botToken} onChange={(e) => { setBotToken(e.target.value); setDestDirty(true); }} placeholder="stored encrypted (leave empty to keep the saved token)" />
             <label>Chat ID</label>
-            <input value={botChatId} onChange={(e) => setBotChatId(e.target.value)} placeholder="-1001234567890" />
+            <input value={botChatId} onChange={(e) => { setBotChatId(e.target.value); setDestDirty(true); }} placeholder="-1001234567890" />
           </>
         )}
         <div className="btn-row" style={{ marginTop: 12 }}>

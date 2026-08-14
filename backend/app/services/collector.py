@@ -52,6 +52,10 @@ def persist_message(db: Session, m: dict) -> Message | None:
             existing.normalized_text = normalize_text(m.get("text"))
             existing.edited_at = m.get("edit_date")
             existing.content_hash = content_hash(m.get("text"))
+            # Force reprocessing: indicators/rules/alerts must be recomputed for
+            # the edited content (process_message skips PROCESSED messages).
+            existing.state = MessageState.PENDING
+            existing.process_error = None
             db.add(MessageEvent(message_id=existing.id, event_type=EventType.EDITED, detail={"edited_at": m.get("edit_date").isoformat() if m.get("edit_date") else None}))
             db.commit()
             enqueue(TASK_REALTIME_PROCESS, message_id=existing.id)
@@ -81,6 +85,9 @@ def persist_message(db: Session, m: dict) -> Message | None:
     db.add(MessageEvent(message_id=msg.id, event_type=EventType.CREATED, detail={"ingested_at": now.isoformat()}))
     db.commit()
     logger.info("message persisted", extra={"message_id": msg.id, "source_id": source.id})
+    # Defer post-processing (normalize/extract/evaluate) to the realtime queue.
+    # This single call site covers both live events and backfilled pages.
+    enqueue(TASK_REALTIME_PROCESS, message_id=msg.id)
     return msg
 
 
@@ -91,41 +98,9 @@ def handle_new_message(m: dict) -> None:
         from ..db import db_session
 
         db = db_session()
-        msg = persist_message(db, m)
-        if msg is not None:
-            enqueue(TASK_REALTIME_PROCESS, message_id=msg.id)
+        persist_message(db, m)
     except Exception:  # noqa: BLE001
         logger.exception("failed to persist incoming message", extra={"chat_id": m.get("chat_id"), "id": m.get("id")})
-    finally:
-        if db is not None:
-            db.close()
-
-
-def handle_message_edit(chat_id: int, message_id: int, text: str | None, edit_date: datetime | None = None) -> None:
-    db = None
-    try:
-        from ..db import db_session
-
-        db = db_session()
-        source = _get_source(db, chat_id)
-        if source is None:
-            return
-        msg = db.scalar(
-            select(Message).where(
-                Message.source_id == source.id,
-                Message.telegram_message_id == message_id,
-            )
-        )
-        if msg is None or msg.original_text == text:
-            return
-        msg.original_text = text
-        msg.normalized_text = normalize_text(text)
-        msg.edited_at = edit_date or datetime.now(timezone.utc)
-        msg.content_hash = content_hash(text)
-        msg.state = MessageState.PENDING
-        db.add(MessageEvent(message_id=msg.id, event_type=EventType.EDITED))
-        db.commit()
-        enqueue(TASK_REALTIME_PROCESS, message_id=msg.id)
     finally:
         if db is not None:
             db.close()

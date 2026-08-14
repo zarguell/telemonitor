@@ -38,7 +38,11 @@ class SimMessageBody(BaseModel):
 
 
 def _check_token(x_control_token: str | None = Header(default=None)) -> None:
-    if not x_control_token or x_control_token != settings.collector_control_token:
+    import hmac
+
+    provided = x_control_token or ""
+    expected = settings.collector_control_token or ""
+    if not hmac.compare_digest(provided, expected):
         raise HTTPException(status_code=401, detail="invalid control token")
 
 

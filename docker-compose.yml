@@ -27,6 +27,8 @@ services:
       TM_SIMULATE_TELEGRAM: "1"
       TM_COLLECTOR_CONTROL_TOKEN: dev-control-token
       TM_COLLECTOR_CONTROL_URL: http://collector:9001
+      # E2E only: lets the alert worker reach the host webhook receiver.
+      TM_ALLOWED_WEBHOOK_HOSTS: host.docker.internal
       TM_REDACT_LOGGING: "1"
       TM_ENVIRONMENT: development
     depends_on:

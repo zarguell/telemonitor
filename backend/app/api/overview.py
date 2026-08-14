@@ -32,6 +32,17 @@ def overview(ctx: AuthContext = Depends(require_any), db: Session = Depends(get_
             Message.ingested_at >= day_ago, Message.state == MessageState.FAILED
         )
     ) or 0
+    processed_messages_24h = db.scalar(
+        select(func.count(Message.id)).where(
+            Message.ingested_at >= day_ago, Message.state == MessageState.PROCESSED
+        )
+    ) or 0
+    alerts_created_24h = db.scalar(select(func.count(Alert.id)).where(Alert.created_at >= day_ago)) or 0
+    alerts_delivered_24h = db.scalar(
+        select(func.count(Alert.id)).where(
+            Alert.created_at >= day_ago, Alert.delivery_state == "delivered"
+        )
+    ) or 0
 
     open_alerts = {
         sev: db.scalar(
@@ -79,7 +90,10 @@ def overview(ctx: AuthContext = Depends(require_any), db: Session = Depends(get_
         "enabled_sources": enabled_sources,
         "backfill_in_progress": backfill_in_progress,
         "messages_24h": messages_24h,
+        "processed_messages_24h": processed_messages_24h,
         "failed_messages_24h": failed_messages_24h,
+        "alerts_created_24h": alerts_created_24h,
+        "alerts_delivered_24h": alerts_delivered_24h,
         "open_alerts": open_alerts,
         "open_alert_total": sum(open_alerts.values()),
         "recent_errors": recent_errors,

@@ -9,7 +9,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="TM_", env_file=".env", extra="ignore")
 
-    app_name: str = "Telemonitor"
     environment: str = "development"
 
     # SQLAlchemy URL (psycopg3 driver)
@@ -35,6 +34,9 @@ class Settings(BaseSettings):
     redact_logging: bool = True
 
     webhook_timeout_seconds: int = 10
+    # Explicit allowlist of webhook destination hostnames (comma-separated) that
+    # bypass the private-range SSRF guard (test environments only; empty in production).
+    allowed_webhook_hosts: str = ""
     delivery_max_attempts: int = 5
     reprocess_stale_minutes: int = 2
 
@@ -47,13 +49,31 @@ class Settings(BaseSettings):
     seed_admin_email: str = "admin@example.invalid"
 
     # Simulated Telegram account details used when TM_SIMULATE_TELEGRAM=1
-    sim_phone: str = "+15550001111"
     sim_otp: str = "12345"
-    sim_dialogs: int = 3
 
-    @property
-    def secret_key_bytes(self) -> bytes:
-        return self.secret_key.encode("utf-8")
+
+_INSECURE_DEFAULTS = {
+    "auth_secret": {"change-me-auth-secret", "local-dev-auth-secret-change-me"},
+    "collector_control_token": {"dev-control-token", ""},
+}
+
+
+def validate_config(settings: Settings) -> list[str]:
+    """Return a list of configuration problems that must be fixed before boot.
+
+    In non-development environments, insecure default secrets are fatal.
+    """
+    problems: list[str] = []
+    if settings.environment != "development":
+        if not settings.secret_key:
+            problems.append("TM_SECRET_KEY is required outside development")
+        if settings.auth_secret in _INSECURE_DEFAULTS["auth_secret"] or len(settings.auth_secret) < 16:
+            problems.append("TM_AUTH_SECRET must be a strong, deployment-managed secret outside development")
+        if settings.collector_control_token in _INSECURE_DEFAULTS["collector_control_token"]:
+            problems.append("TM_COLLECTOR_CONTROL_TOKEN must be a strong, deployment-managed secret outside development")
+        if settings.seed_admin_password == "admin123":
+            problems.append("TM_SEED_ADMIN_PASSWORD must be changed outside development")
+    return problems
 
 
 @lru_cache

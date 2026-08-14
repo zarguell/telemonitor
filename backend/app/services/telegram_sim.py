@@ -95,8 +95,8 @@ def _make_message(chat_id: int, msg_id: int, ts: datetime, text: str | None = No
         "text": text,
         "sender_id": 999000001,
         "reply_to_msg_id": None,
-        "fwd_from_id": None,
-        "fwd_from_name": None,
+        "forward_from_id": None,
+        "forward_from_name": None,
         "media_type": None,
         "media_meta": None,
         "edit_date": None,
@@ -127,6 +127,7 @@ class SimTelegramService(TelegramServiceProtocol):
             elif cfg.session_enc:
                 self._connected = True
                 set_status(db, TelegramStatus.AUTHORIZED, "connected (simulated)")
+                self._start_generator()
             else:
                 set_status(db, cfg.status or TelegramStatus.NOT_CONFIGURED)
         finally:
@@ -175,6 +176,26 @@ class SimTelegramService(TelegramServiceProtocol):
             finally:
                 db.close()
             return self.status()
+        db = self._db()
+        try:
+            phone = db.get(TelegramConfiguration, 1).phone_enc if db.get(TelegramConfiguration, 1) else None
+        finally:
+            db.close()
+        from ..crypto import decrypt_secret
+
+        plain_phone = decrypt_secret(phone) if phone else ""
+        if plain_phone.rstrip().endswith("2"):
+            # Simulated 2FA: account with phone ending in "2" requires a password.
+            self._awaiting_2fa = True
+            db = self._db()
+            try:
+                set_status(db, TelegramStatus.WAITING_2FA, "simulated: two-factor password required")
+            finally:
+                db.close()
+            return self.status()
+        return await self._finish_authorized()
+
+    async def _finish_authorized(self) -> dict:
         self._connected = True
         db = self._db()
         try:
@@ -189,8 +210,10 @@ class SimTelegramService(TelegramServiceProtocol):
         return self.status()
 
     async def submit_password(self, password: str) -> dict:
-        # The simulated account never enables 2FA; the password step is not exercised.
-        return self.status()
+        if not getattr(self, "_awaiting_2fa", False) or not password:
+            return self.status()
+        self._awaiting_2fa = False
+        return await self._finish_authorized()
 
     async def disconnect(self) -> dict:
         await self.stop()
@@ -206,6 +229,9 @@ class SimTelegramService(TelegramServiceProtocol):
         finally:
             db.close()
         return self.status()
+
+    def is_connected(self) -> bool:
+        return self._connected
 
     def status(self) -> dict:
         db = self._db()

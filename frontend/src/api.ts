@@ -22,6 +22,9 @@ export class ApiError extends Error {
   }
 }
 
+/** Fired when any API call returns 401 so the app can return to Login. */
+export const UNAUTHORIZED_EVENT = "tm:unauthorized";
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api/v1${path}`, {
     method,
@@ -29,12 +32,26 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  if (res.status === 401) {
-    throw new ApiError(401, "Not authenticated");
+  let data: Record<string, unknown> | null = null;
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    data = null;
   }
-  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    const detail = typeof data?.detail === "string" ? data.detail : "Not authenticated";
+    // Session expiry mid-use: return the whole UI to the login screen.
+    if (!path.startsWith("/auth/login")) {
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    }
+    throw new ApiError(401, detail);
+  }
   if (!res.ok) {
-    throw new ApiError(res.status, typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail ?? data));
+    const detail =
+      typeof data?.detail === "string"
+        ? data.detail
+        : JSON.stringify(data?.detail ?? data ?? {});
+    throw new ApiError(res.status, detail);
   }
   return data as T;
 }

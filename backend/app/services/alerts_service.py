@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ..models import Alert, AlertMessage, AlertState, DeliveryState, Severity, Source, TelegramConfiguration
@@ -54,6 +54,10 @@ def create_alert_candidate(
     key = dedupe_key_for(rule.id, source.id, matched_conditions, excerpt or "")
     window = max(0, int(rule.dedup_window_seconds or 0))
 
+    # Serialize candidates for the same dedupe key within this transaction so a
+    # check-then-act race cannot create duplicate alerts (PRD 7.5 grouping).
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": key})
+
     existing = db.scalar(
         select(Alert).where(
             Alert.dedupe_key == key,
@@ -66,11 +70,12 @@ def create_alert_candidate(
             db.add(AlertMessage(alert_id=existing.id, message_id=message.id))
         existing.message_count += 1
         existing.last_seen_at = now
-        db.commit()
+        db.flush()
         return existing, False
 
     alert = Alert(
         rule_id=rule.id,
+        rule_version=rule.version,  # snapshot at match time
         source_id=source.id,
         dedupe_key=key,
         severity=rule.severity,
@@ -85,7 +90,17 @@ def create_alert_candidate(
     db.add(alert)
     db.flush()
     db.add(AlertMessage(alert_id=alert.id, message_id=message.id))
-    db.commit()
+    # No commit here: the caller (process_message) owns the transaction so a
+    # later failure rolls back partial alert/rule-match state atomically.
+    # Delivery is scheduled independently from creation; a destination outage
+    # must not prevent alert creation.
+    try:
+        from ..jobs import TASK_ALERT_DELIVER, enqueue
+
+        enqueue(TASK_ALERT_DELIVER, alert_id=alert.id)
+    except Exception:  # noqa: BLE001
+        logger.exception("failed to schedule alert delivery", extra={"alert_id": alert.id})
+    return alert, True
     logger.info("alert candidate created", extra={"alert_id": alert.id, "rule": rule.id, "source": source.id})
     # Delivery is scheduled independently from creation; a destination outage
     # must not prevent alert creation.

@@ -58,16 +58,22 @@ class DisconnectRequest(BaseModel):
     confirm: bool = False
 
 
-async def _control(path: str, **body) -> dict:
+async def _control(path: str, method: str = "POST", **body) -> dict:
     """Forward a request to the collector's internal control API."""
     url = f"{settings.collector_control_url.rstrip('/')}/control/{path}"
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            r = await client.post(
-                url,
-                json=body,
-                headers={"X-Control-Token": settings.collector_control_token},
-            )
+            if method == "GET":
+                r = await client.get(
+                    url,
+                    headers={"X-Control-Token": settings.collector_control_token},
+                )
+            else:
+                r = await client.post(
+                    url,
+                    json=body,
+                    headers={"X-Control-Token": settings.collector_control_token},
+                )
         if r.status_code == 401:
             raise HTTPException(status_code=503, detail="Collector rejected control token")
         if r.status_code == 503:
@@ -227,7 +233,7 @@ async def telegram_test(
         raise HTTPException(status_code=409, detail="Telegram is not configured")
     # collector connectivity without changing monitored sources
     try:
-        result = await _control("status")
+        result = await _control("status", method="GET")
     except HTTPException as e:
         log_audit(
             db,

@@ -7,11 +7,17 @@ export default function AuditLog() {
   const [total, setTotal] = useState(0);
   const [action, setAction] = useState("");
   const [actor, setActor] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const r = await api.audit({ action: action || undefined, actor: actor || undefined, limit: 200 });
-    setItems(r.items);
-    setTotal(r.total);
+    try {
+      const r = await api.audit({ action: action || undefined, actor: actor || undefined, limit: 200 });
+      setItems(r.items);
+      setTotal(r.total);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }, [action, actor]);
 
   useEffect(() => {
@@ -26,9 +32,10 @@ export default function AuditLog() {
       <p className="page-sub">
         Sanitized record of configuration changes, searches, and triage ({total} events)
       </p>
+      {error && <div className="error-box">{error}</div>}
       <div className="toolbar">
-        <input placeholder="Filter by actor" value={actor} onChange={(e) => setActor(e.target.value)} />
-        <input placeholder="Filter by action (e.g. rule.create)" value={action} onChange={(e) => setAction(e.target.value)} />
+        <input placeholder="Filter by actor (substring)" value={actor} onChange={(e) => setActor(e.target.value)} />
+        <input placeholder="Filter by action (substring, e.g. rule)" value={action} onChange={(e) => setAction(e.target.value)} />
       </div>
       <div className="card">
         <table>

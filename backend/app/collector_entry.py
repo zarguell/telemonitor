@@ -21,7 +21,7 @@ from .db import db_session
 from .jobs import app as procrastinate_app
 from sqlalchemy import select
 
-from .models import TelegramConfiguration, WorkerHeartbeat
+from .models import TelegramConfiguration, TelegramStatus, WorkerHeartbeat
 from .redact import install_redaction
 from .services import collector_state
 from .services.collector import handle_new_message
@@ -52,6 +52,16 @@ async def _heartbeat_loop(stop: threading.Event) -> None:
                 if tg is not None:
                     tg.collector_heartbeat_at = datetime.now(timezone.utc)
                     tg.last_update_at = datetime.now(timezone.utc)
+                    # Surface real connection state: authorized-but-disconnected
+                    # must read as "reconnecting" (PRD 7.1 state).
+                    service = collector_state.get_service()
+                    connected = bool(service and service.is_connected())
+                    if tg.status == TelegramStatus.AUTHORIZED and not connected:
+                        tg.status = TelegramStatus.CONNECTING
+                        tg.status_detail = "connection lost; reconnecting"
+                    elif tg.status == TelegramStatus.CONNECTING and connected:
+                        tg.status = TelegramStatus.AUTHORIZED
+                        tg.status_detail = "connected"
                 db.commit()
             finally:
                 db.close()
@@ -61,6 +71,9 @@ async def _heartbeat_loop(stop: threading.Event) -> None:
 
 
 async def _run_control_server(stop: threading.Event) -> None:
+    """Run the internal control API. The serve task is owned here so it is
+    properly cancelled at shutdown, and a bind/startup failure is surfaced
+    instead of hanging forever."""
     config = uvicorn.Config(
         create_control_app(),
         host="0.0.0.0",
@@ -69,10 +82,23 @@ async def _run_control_server(stop: threading.Event) -> None:
         access_log=False,
     )
     server = uvicorn.Server(config)
-    task = asyncio.ensure_future(server.serve())
-    while not stop.is_set() and not server.started:
-        await asyncio.sleep(0.1)
-    await task
+    serve_task = asyncio.ensure_future(server.serve())
+    try:
+        while not stop.is_set() and not server.started and not server.should_exit:
+            await asyncio.sleep(0.1)
+        if not server.started:
+            if server.should_exit:
+                raise RuntimeError("control server failed to start (port in use?)")
+            # stop requested before startup finished — just return
+            return
+        await serve_task
+    finally:
+        if not serve_task.done():
+            serve_task.cancel()
+            try:
+                await serve_task
+            except asyncio.CancelledError:
+                pass
 
 
 def _run_backfill_worker(stop: threading.Event) -> None:

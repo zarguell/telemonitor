@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import type { Health, Overview } from "../types";
 
@@ -24,6 +24,7 @@ export default function Overview() {
         if (alive) {
           setOv(o);
           setHealth(h);
+          setError(null); // clear transient failures on success
         }
       } catch (e) {
         if (alive) setError(String(e));
@@ -37,14 +38,23 @@ export default function Overview() {
     };
   }, []);
 
-  if (error) return <div className="error-box">{error}</div>;
-  if (!ov || !health) return <div className="empty">Loading overview…</div>;
+  if (!ov || !health) {
+    return (
+      <div>
+        <h1>Overview</h1>
+        <p className="page-sub">Operational status of the monitoring platform</p>
+        {error && <div className="error-box">{error}</div>}
+        <div className="empty">Loading overview…</div>
+      </div>
+    );
+  }
 
   const tgBadge = (() => {
     const s = ov.telegram.state;
     const connected = health.collector.connected;
     if (s === "authorized" && connected) return <span className="badge green">connected</span>;
     if (s === "authorized") return <span className="badge yellow">authorized · collector offline</span>;
+    if (s === "reconnecting") return <span className="badge yellow">reconnecting</span>;
     if (s === "waiting_code" || s === "waiting_2fa" || s === "waiting_phone")
       return <span className="badge yellow">{s.replace(/_/g, " ")}</span>;
     if (s === "error") return <span className="badge red">error</span>;
@@ -61,12 +71,20 @@ export default function Overview() {
     <div>
       <h1>Overview</h1>
       <p className="page-sub">Operational status of the monitoring platform</p>
+      {error && <div className="error-box">{error}</div>}
 
       <div className="grid grid-4">
         <Stat value={tgBadge} label="Telegram connection" />
         <Stat value={ov.enabled_sources} label="Enabled sources" />
         <Stat value={ov.messages_24h} label="Messages (24h)" />
         <Stat value={ov.backfill_in_progress} label="Backfills in progress" />
+      </div>
+
+      <div className="grid grid-4" style={{ marginTop: 16 }}>
+        <Stat value={ov.processed_messages_24h ?? "—"} label="Processed (24h)" />
+        <Stat value={ov.failed_messages_24h ?? 0} label="Failed messages (24h)" />
+        <Stat value={ov.alerts_created_24h ?? "—"} label="Alerts created (24h)" />
+        <Stat value={ov.alerts_delivered_24h ?? "—"} label="Alerts delivered (24h)" />
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
@@ -88,7 +106,7 @@ export default function Overview() {
         </div>
         <div className="detail-row">
           <span className="k">Collector state</span>
-          <span>{health.collector.state} {health.collector.detail ? `— ${health.collector.detail}` : ""}</span>
+          <span>{health.collector.state} {health.collector.connected ? "" : "(disconnected)"}</span>
         </div>
         <div className="detail-row">
           <span className="k">Collector heartbeat</span>

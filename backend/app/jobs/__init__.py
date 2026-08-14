@@ -132,8 +132,8 @@ def process_message(message_id: int):
         msg = db.get(Message, message_id)
         if msg is None:
             return
-        if msg.state == MessageState.PROCESSED:
-            return  # idempotent
+        if msg.state in (MessageState.PROCESSED, MessageState.FAILED):
+            return  # idempotent; FAILED is terminal
         msg.processing_attempts = (msg.processing_attempts or 0) + 1
         source = db.get(Source, msg.source_id)
         try:
@@ -191,6 +191,12 @@ def process_message(message_id: int):
                             matched_at=datetime.now(timezone.utc),
                         )
                     )
+                else:
+                    # reprocessed (edited) content: refresh match snapshot
+                    existing.excerpt = match_excerpt
+                    existing.rule_version = rule.version
+                    existing.matched_conditions = result["matched_conditions"]
+                    existing.matched_at = datetime.now(timezone.utc)
                 rule.last_match_at = datetime.now(timezone.utc)
                 if source:
                     create_alert_candidate(
@@ -205,16 +211,22 @@ def process_message(message_id: int):
             msg.process_error = None
             if source:
                 source.last_message_at = msg.sent_at or msg.ingested_at
+                source.last_success_at = datetime.now(timezone.utc)
             db.commit()
         except Exception as e:  # noqa: BLE001
+            # Persist the attempt counter separately: the transaction rollback
+            # above would otherwise undo it and the job would retry forever.
             db.rollback()
             msg = db.get(Message, message_id)
             if msg is not None:
+                msg.processing_attempts = (msg.processing_attempts or 0) + 1
                 msg.process_error = f"{type(e).__name__}: {e}"[:500]
                 if (msg.processing_attempts or 0) >= 3:
                     msg.state = MessageState.FAILED
                 db.commit()
-            logger.warning("realtime processing failed", extra={"message_id": message_id, "error": str(e)})
+            logger.warning("realtime processing failed", extra={"message_id": message_id, "error": str(e), "attempts": msg.processing_attempts if msg else None})
+            if msg is None or msg.state == MessageState.FAILED:
+                return  # terminal — stop retrying
             raise _db_retry(10)
     finally:
         db.close()
@@ -278,6 +290,14 @@ def deliver_alert(alert_id: int):
     except Exception as e:  # noqa: BLE001
         db.rollback()
         logger.exception("deliver_alert unexpected error", extra={"alert_id": alert_id})
+        alert = db.get(Alert, alert_id)
+        attempts = (alert.delivery_attempts or 0) if alert else 0
+        if alert is not None and attempts >= settings.delivery_max_attempts:
+            alert.delivery_state = DeliveryState.FAILED
+            alert.last_delivery_error = f"{type(e).__name__}: {e}"[:300]
+            db.commit()
+            logger.error("alert delivery permanently failed (exception path)", extra={"alert_id": alert_id})
+            return
         raise _db_retry(60) from e
     finally:
         db.close()
@@ -324,6 +344,11 @@ def fetch_backfill_page(source_id: int):
         if service is None:
             raise RuntimeError("telegram service not available in this process")
 
+        # Verify the Telegram service is actually usable before interpreting an
+        # empty page as "history exhausted" (a disconnected/unconfigured client
+        # returns an empty page and must NOT flip the source to live).
+        if service.status().get("state") != "authorized":
+            raise RuntimeError("telegram service not authorized; deferring backfill")
         page = service.get_history_sync(
             chat_id=source.telegram_chat_id,
             offset_id=source.backfill_checkpoint,
@@ -411,6 +436,16 @@ def retention_task(force: bool = False):
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         deleted = retention.delete_expired(db, cutoff)
         set_setting(db, "retention_last_run", {"at": datetime.now(timezone.utc).isoformat()})
+        from ..audit import ACTION_RETENTION_RUN, log_audit
+
+        log_audit(
+            db,
+            actor_user_id=None,
+            actor_username="system",
+            action=ACTION_RETENTION_RUN,
+            object_type="messages",
+            detail={"deleted_messages": deleted, "retention_days": days},
+        )
         logger.info("retention run complete", extra={"deleted_messages": deleted, "days": days})
     finally:
         db.close()
@@ -436,6 +471,16 @@ def reprocess_stale_task():
         for mid in rows:
             enqueue(TASK_REALTIME_PROCESS, message_id=mid)
         if rows:
+            from ..audit import ACTION_MAINTENANCE_RUN, log_audit
+
+            log_audit(
+                db,
+                actor_user_id=None,
+                actor_username="system",
+                action=ACTION_MAINTENANCE_RUN,
+                object_type="messages",
+                detail={"job": "reprocess_stale", "requeued": len(rows)},
+            )
             logger.info("stale messages requeued", extra={"count": len(rows)})
     finally:
         db.close()
@@ -469,11 +514,15 @@ def worker_health_task():
         tg = db.get(TelegramConfiguration, 1)
         if tg and tg.collector_heartbeat_at and tg.collector_heartbeat_at < stale_cutoff:
             tg.status_detail = "collector heartbeat expired"
-        # requeue abandoned jobs (worker died mid-job) so backfill/realtime recover
+        # requeue abandoned jobs (worker died mid-job) so backfill/realtime recover.
+        # Based on the worker's heartbeat staleness, NOT the job's due time — a
+        # job that simply waited in the queue must not be double-executed.
         db.execute(
             text(
                 "UPDATE procrastinate_jobs SET status = 'todo', scheduled_at = now() "
-                "WHERE status = 'doing' AND scheduled_at < now() - interval '90 seconds'"
+                "WHERE status = 'doing' AND worker_id IS NOT NULL AND worker_id NOT IN ("
+                "  SELECT id FROM procrastinate_workers "
+                "  WHERE last_heartbeat > now() - interval '45 seconds')"
             )
         )
         db.commit()

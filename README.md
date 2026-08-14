@@ -99,17 +99,18 @@ Telegram Configuration page to use a real account.
 ## Testing
 
 ```bash
-# Backend unit/integration tests (against the telemonitor_test database)
+# Backend unit/integration tests (60 tests, against the telemonitor_test database)
 docker compose exec -T -e TM_DATABASE_URL=postgresql+psycopg://telemonitor:telemonitor@db:5432/telemonitor_test \
   -e TM_PROCRASTINATE_DATABASE_URL=postgresql://telemonitor:telemonitor@db:5432/telemonitor_test \
   -e DATABASE_URL=postgresql://telemonitor:telemonitor@db:5432/telemonitor_test \
   -e TM_SECRET_KEY=test-key-kiXwYpS3vN7qL9tB2mR4cE6gH8jA1dF5uZ0xW3oV6yS= \
   api python -m pytest tests/ -q
 
-# End-to-end test against the running stack (82 assertions):
+# End-to-end test against the running stack (99 assertions):
 # auth + RBAC, full Telegram auth flow, discovery + allowlist, backfill,
 # live message -> alert -> webhook delivery, deduplication, triage,
-# backfill interrupt/resume, retention cleanup, audit + secret hygiene, UI.
+# backfill interrupt/resume, retention cleanup, audit + secret hygiene, UI,
+# 2FA flow, search filters, source deletion, and the 60s latency budget.
 python3 scripts/e2e.py
 ```
 
@@ -123,7 +124,7 @@ python3 scripts/e2e.py
 | `TM_AUTH_SECRET` | JWT signing secret |
 | `TM_SIMULATE_TELEGRAM` | `1` = simulated account, `0` = real Telethon |
 | `TM_COLLECTOR_CONTROL_URL` / `TM_COLLECTOR_CONTROL_TOKEN` | Private API→collector channel |
-| `TM_RETENTION_DAYS_DEFAULT` | Initial content retention (admin-configurable in UI) |
+| `TM_DEFAULT_RETENTION_DAYS` | Initial content retention (admin-configurable in UI) |
 
 The collector exposes an internal control API on port `9001` (bound to
 `127.0.0.1` on the host in the dev compose; do not expose in production). It
@@ -134,7 +135,23 @@ to inject a specific message.
 ## Security properties
 
 - All API routes except `GET /api/v1/health` require authentication (httpOnly
-  signed cookie) with role-based access control (admin / operator / analyst).
+  signed cookie, Secure-flagged outside development) with role-based access
+  control (admin / operator / analyst).
+- Sessions are revocable: logout and password changes bump a per-user token
+  version, invalidating previously issued JWTs.
+- Login is rate-limited (per username and per IP) and failed attempts are
+  audited.
+- The collector control API is guarded by a token compared in constant time;
+  production startup refuses insecure default secrets (`TM_AUTH_SECRET`,
+  `TM_COLLECTOR_CONTROL_TOKEN`, `TM_SECRET_KEY`, demo admin password).
+- Webhook destinations are SSRF-guarded: loopback/private/link-local/metadata
+  ranges are rejected at save and at delivery time (with an explicit
+  `TM_ALLOWED_WEBHOOK_HOSTS` bypass for test environments), redirects are
+  disabled, and URLs with embedded credentials are rejected.
+- Demo users are seeded only on a fresh database (empty users table) — deleted
+  accounts are never resurrected.
+- nginx serves the UI with CSP, X-Frame-Options DENY, and nosniff headers.
+- OpenAPI docs are disabled outside development.
 - API hash, Telegram session, and bot tokens are encrypted at rest (Fernet).
   One-time codes and 2FA passwords exist in process memory only, are never
   persisted, and are redacted from logs and audit payloads (verified by the E2E
@@ -155,7 +172,7 @@ to inject a specific message.
 password, disconnect, test), `sources` (+ `discovered`, PATCH/DELETE),
 `rules` (+ `test`), `search`, `alerts` (+ triage PATCH), `settings`
 (+ destination test), `users`, `audit`, `overview` — see
-`backend/app/api/` for details or the OpenAPI docs at `/docs` (auth required).
+`backend/app/api/` for details. OpenAPI docs (`/docs`) are exposed only when `TM_ENVIRONMENT=development`.
 
 ## Reliability
 

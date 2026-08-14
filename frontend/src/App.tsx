@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { HashRouter, Navigate, NavLink, Route, Routes } from "react-router-dom";
-import { api } from "./api";
+import { api, UNAUTHORIZED_EVENT } from "./api";
 import type { User } from "./types";
 import Login from "./pages/Login";
 import Overview from "./pages/Overview";
@@ -30,6 +30,14 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
+function RequireRole({ roles, children }: { roles: string[]; children: React.ReactElement }) {
+  const { user } = useAuth();
+  if (!user || !roles.includes(user.role)) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
 function NavItem({ to, label, show }: { to: string; label: string; show: boolean }) {
   if (!show) return null;
   return (
@@ -39,8 +47,53 @@ function NavItem({ to, label, show }: { to: string; label: string; show: boolean
   );
 }
 
+function ChangePasswordModal({ onClose }: { onClose: () => void }) {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [ok, setOk] = useState<string | null>(null);
+
+  const submit = async () => {
+    setError(null);
+    setOk(null);
+    try {
+      await api.changePassword(current, next);
+      setOk("Password changed — you will be signed out.");
+      setTimeout(() => {
+        void api.logout().catch(() => {});
+        window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+      }, 1200);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" style={{ width: 420 }} onClick={(e) => e.stopPropagation()}>
+        <h2>Change password</h2>
+        {error && <div className="error-box">{error}</div>}
+        {ok && <div className="ok-box">{ok}</div>}
+        <label>Current password</label>
+        <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+        <label>New password (8+ characters)</label>
+        <input type="password" value={next} onChange={(e) => setNext(e.target.value)} />
+        <div className="btn-row" style={{ marginTop: 14 }}>
+          <button className="btn" onClick={() => void submit()} disabled={!current || next.length < 8}>
+            Change password
+          </button>
+          <button className="btn btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Layout() {
   const { user, logout } = useAuth();
+  const [showPw, setShowPw] = useState(false);
   const isOperator = user?.role === "operator" || user?.role === "admin";
   const isAdmin = user?.role === "admin";
   return (
@@ -62,6 +115,9 @@ function Layout() {
             <span className="user-name">{user?.username}</span>
             <span className="user-role">{user?.role}</span>
           </div>
+          <button className="btn btn-ghost btn-sm" onClick={() => setShowPw(true)}>
+            Change password
+          </button>
           <button className="btn btn-ghost btn-sm" onClick={() => void logout()}>
             Sign out
           </button>
@@ -70,16 +126,52 @@ function Layout() {
       <main className="content">
         <Routes>
           <Route path="/" element={<Overview />} />
-          <Route path="/telegram" element={<TelegramConfig />} />
-          <Route path="/sources" element={<Sources />} />
-          <Route path="/rules" element={<Rules />} />
+          <Route
+            path="/telegram"
+            element={
+              <RequireRole roles={["operator", "admin"]}>
+                <TelegramConfig />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/sources"
+            element={
+              <RequireRole roles={["operator", "admin"]}>
+                <Sources />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/rules"
+            element={
+              <RequireRole roles={["operator", "admin"]}>
+                <Rules />
+              </RequireRole>
+            }
+          />
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/search" element={<Search />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/audit" element={<AuditLog />} />
+          <Route
+            path="/settings"
+            element={
+              <RequireRole roles={["admin"]}>
+                <Settings />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/audit"
+            element={
+              <RequireRole roles={["operator", "admin"]}>
+                <AuditLog />
+              </RequireRole>
+            }
+          />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+      {showPw && <ChangePasswordModal onClose={() => setShowPw(false)} />}
     </div>
   );
 }
@@ -105,6 +197,13 @@ export default function App() {
       .then((r) => setUser(r.user))
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
+  }, []);
+
+  // Any 401 from an API call (session expiry, revocation) returns to Login.
+  useEffect(() => {
+    const onUnauthorized = () => setUser(null);
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
 
   const logout = useCallback(async () => {
