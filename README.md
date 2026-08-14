@@ -11,6 +11,28 @@ posts are presented as **unverified claims** with preserved provenance; any
 external action requires human review. No LLM, embeddings, semantic search, or
 automated attribution is used anywhere in the pipeline.
 
+## Documentation
+
+The operator documentation is an [Astro Starlight](https://starlight.astro.build/)
+site in [`website/`](website/), deployed to GitHub Pages at
+**https://zarguell.github.io/telemonitor/docs/** by
+`.github/workflows/deploy-docs.yml` (the same strategy as
+[Silo's project site](https://github.com/Silo-Server/siloserver.org)). Edit
+Markdown under `website/src/content/docs/docs/`; the site rebuilds and deploys
+on every push to `main` that touches `website/`.
+
+```sh
+cd website
+bun install
+bun run dev      # → http://localhost:4321
+bun run build    # → website/dist/
+bun run preview  # serves the built site
+```
+
+The site is configured for `https://zarguell.github.io/telemonitor/`; to host
+it at another URL, set repo `SITE` / `BASE_PATH` variables — the workflow
+passes them through to the Astro build.
+
 ## Architecture
 
 | Component | Technology | Responsibility |

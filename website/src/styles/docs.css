@@ -1,0 +1,18 @@
+/* Telemonitor docs theme — a light customization over Starlight defaults. */
+
+:root {
+  --sl-color-accent-low: #d6e4ff;
+  --sl-color-accent: #1d4ed8;
+  --sl-color-accent-high: #173a8f;
+}
+
+:root[data-theme="dark"] {
+  --sl-color-accent-low: #1e3a8a;
+  --sl-color-accent: #3b82f6;
+  --sl-color-accent-high: #bfdbfe;
+}
+
+/* Table cells with long values (config keys, URLs) should be allowed to wrap. */
+.sl-markdown-content table :is(td, th) {
+  overflow-wrap: anywhere;
+}

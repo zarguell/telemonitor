@@ -1,0 +1,15 @@
+---
+// The docs-only site lives under /docs; make the site root redirect there.
+const target = `${import.meta.env.BASE_URL}/docs`;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="refresh" content={`0; url=${target}`} />
+    <title>Telemonitor docs</title>
+  </head>
+  <body>
+    <p>Redirecting to <a href={target}>the Telemonitor documentation</a>…</p>
+  </body>
+</html>

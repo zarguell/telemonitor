@@ -19,3 +19,6 @@ pgdata/
 *.session
 scripts/.webhook_payloads.log
 *.tsbuildinfo
+
+# Astro generated types (website docs site)
+.astro/
