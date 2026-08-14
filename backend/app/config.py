@@ -55,6 +55,10 @@ class Settings(BaseSettings):
 _INSECURE_DEFAULTS = {
     "auth_secret": {"change-me-auth-secret", "local-dev-auth-secret-change-me"},
     "collector_control_token": {"dev-control-token", ""},
+    # Public dev Fernet key committed in docker-compose.yml (documented default).
+    "secret_key": {
+        "kiXwYpS3vN7qL9tB2mR4cE6gH8jA1dF5uZ0xW3oV6yS=",
+    },
 }
 
 
@@ -65,8 +69,8 @@ def validate_config(settings: Settings) -> list[str]:
     """
     problems: list[str] = []
     if settings.environment != "development":
-        if not settings.secret_key:
-            problems.append("TM_SECRET_KEY is required outside development")
+        if not settings.secret_key or settings.secret_key in _INSECURE_DEFAULTS["secret_key"]:
+            problems.append("TM_SECRET_KEY must be a strong, non-committed key outside development")
         if settings.auth_secret in _INSECURE_DEFAULTS["auth_secret"] or len(settings.auth_secret) < 16:
             problems.append("TM_AUTH_SECRET must be a strong, deployment-managed secret outside development")
         if settings.collector_control_token in _INSECURE_DEFAULTS["collector_control_token"]:

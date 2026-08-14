@@ -36,7 +36,8 @@ there are no real secrets committed:
 
 | Item | Value | Used for |
 |---|---|---|
-| `TM_SECRET_KEY` (compose) | per-environment (rotated; the original committed dev value is no longer used) | Fernet at-rest encryption of API hash, Telethon session, bot tokens in the **local dev database only** |
+| `TM_SECRET_KEY` (compose default) | `kiXwYpS3vN7qL9tB2mR4cE6gH8jA1dF5uZ0xW3oV6yS=` — public, dev-only fallback; `.env` overrides | Fernet at-rest encryption of API hash, Telethon session, bot tokens — **dev database only** |
+| `TM_AUTH_SECRET` / `TM_COLLECTOR_CONTROL_TOKEN` (compose defaults) | public dev-only fallbacks; `.env` overrides | JWT signing / collector control API guard |
 | Demo users | `admin/admin123`, `operator/operator123`, `analyst/analyst123` | Local logins only |
 | Simulator OTP | `12345` | Simulated Telegram one-time code |
 
@@ -46,8 +47,10 @@ are public. In production:
 
 - Set `TM_SECRET_KEY` from deployment secret management (generate with
   `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`).
-- Never authorize a real Telegram account while running with the dev key —
-  its session would be recoverable by anyone with repo access.
+- Never authorize a real Telegram account while running with a key that is
+  committed or publicly known — its session would be recoverable by anyone
+  with repo access. Outside `development`, startup refuses to boot with the
+  committed default key.
 - Replace all demo users before exposing the deployment.
 
 See [Configuration](#configuration-environment) and the security properties
@@ -71,8 +74,17 @@ All pages of the operator UI (captured against the local stack in simulated mode
 ## Quick start (local Docker)
 
 ```bash
+# optional: override the public dev-only defaults with local secrets
+cp .env.example .env
+#   TM_SECRET_KEY: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+#   TM_AUTH_SECRET / TM_COLLECTOR_CONTROL_TOKEN: python -c "import secrets; print(secrets.token_urlsafe(32))"
 docker compose up -d --build
 ```
+
+Committed defaults in `docker-compose.yml` are public dev-only values; any
+`.env` in the project root (gitignored) overrides them. The locally-active
+secrets must never be committed — the moment real Telegram credentials are in
+use, the session is encrypted with the `.env` key only.
 
 This starts PostgreSQL, migrations, API (`:8000`), collector (simulated Telegram),
 worker, and web UI (`http://localhost:8080`). Demo accounts:

@@ -23,7 +23,20 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASE = "http://localhost:8080/api/v1"
 CONTROL = "http://127.0.0.1:9001"
-CONTROL_TOKEN = "dev-control-token"
+
+
+def _env_or_default(key: str, default: str) -> str:
+    """Read the project .env (gitignored, local-only secrets) if present."""
+    env_file = os.path.join(ROOT, ".env")
+    if os.path.exists(env_file):
+        for line in open(env_file, encoding="utf-8"):
+            line = line.strip()
+            if line.startswith(key + "="):
+                return line.split("=", 1)[1].strip()
+    return os.environ.get(key, default)
+
+
+CONTROL_TOKEN = _env_or_default("TM_COLLECTOR_CONTROL_TOKEN", "dev-control-token")
 RECEIVER_PORT = 9899
 RECEIVER_URL = f"http://host.docker.internal:{RECEIVER_PORT}/webhook"
 RECEIVER_LOG = os.path.join(ROOT, "scripts", ".webhook_payloads.log")
