@@ -108,6 +108,9 @@ def clear_session(db: Session) -> None:
 def _chat_to_dict(entity, dialog) -> dict:
     from telethon.tl.types import Channel, Chat, User  # type: ignore
 
+    # chat_id is filled in by get_dialogs via client.get_peer_id (Telethon's
+    # canonical full id: -100<id> for channels, negative for groups) so that
+    # it matches Message.chat_id / event.chat_id used by the collector.
     chat_id = getattr(entity, "id", 0)
     ctype = "channel"
     if isinstance(entity, User):
@@ -116,7 +119,11 @@ def _chat_to_dict(entity, dialog) -> dict:
         ctype = "group"
     elif isinstance(entity, Channel):
         ctype = "channel" if getattr(entity, "megagroup", False) is False else "group"
-    title = getattr(entity, "title", None) or getattr(entity, "first_name", "") + " " + getattr(entity, "last_name", "")
+    title = getattr(entity, "title", None) or ""
+    if not title:
+        first = getattr(entity, "first_name", None) or ""
+        last = getattr(entity, "last_name", None) or ""
+        title = f"{first} {last}".strip()
     return {
         "chat_id": chat_id,
         "title": (title or str(chat_id)).strip(),
@@ -128,7 +135,13 @@ def _chat_to_dict(entity, dialog) -> dict:
 
 
 def _message_to_dict(m) -> dict:
-    from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument, MessageMediaWebPage  # type: ignore
+    from telethon.tl.types import (  # type: ignore
+        MessageEntityTextUrl,
+        MessageEntityUrl,
+        MessageMediaDocument,
+        MessageMediaPhoto,
+        MessageMediaWebPage,
+    )
 
     media_type = None
     media_meta = None
@@ -151,6 +164,20 @@ def _message_to_dict(m) -> dict:
         if fwd_from_id is not None:
             fwd_from_id = getattr(fwd_from_id, "user_id", None) or getattr(fwd_from_id, "channel_id", None)
         fwd_from_name = getattr(fwd, "from_name", None)
+    # Telegram often keeps URLs only in link entities (MessageEntityUrl /
+    # MessageEntityTextUrl) while the plain message text omits them. Extract
+    # them so the indicator pipeline can see them.
+    extra_urls: list[str] = []
+    if m.entities:
+        for e in m.entities:
+            if isinstance(e, MessageEntityUrl):
+                try:
+                    extra_urls.append(m.message[e.offset : e.offset + e.length])
+                except TypeError:
+                    pass
+            elif isinstance(e, MessageEntityTextUrl):
+                if e.url:
+                    extra_urls.append(e.url)
     sender_id = m.sender_id
     permalink = None
     if m.chat and getattr(m.chat, "username", None):
@@ -171,6 +198,7 @@ def _message_to_dict(m) -> dict:
         "edit_date": m.edit_date,
         "permalink": permalink,
         "out": m.out,
+        "urls": extra_urls,
     }
 
 
@@ -193,7 +221,7 @@ class TelethonService(TelegramServiceProtocol):
         db = self._db()
         try:
             cfg = load_tg_config(db)
-            if cfg is None or not cfg.session_enc:
+            if cfg is None:
                 return None, None, None, None
             return (
                 decrypt_secret(cfg.api_id_enc),
@@ -225,7 +253,7 @@ class TelethonService(TelegramServiceProtocol):
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
         api_id, api_hash, phone, session_str = self._load_stored()
-        if not (api_id and api_hash and session_str):
+        if not (api_id and api_hash):
             db = self._db()
             try:
                 cfg = load_tg_config(db)
@@ -235,26 +263,54 @@ class TelethonService(TelegramServiceProtocol):
                 db.close()
             return
         self._api_id, self._api_hash = api_id, api_hash
-        client = self._client_for(api_id, api_hash, session_str)
-        self._client = client
-        try:
-            await client.connect()
-            if await client.is_user_authorized():
-                self._register_handlers()
-                await self._announce_status(TelegramStatus.AUTHORIZED, "connected")
-            else:
-                await client.disconnect()
-                self._client = None
+        if session_str:
+            client = self._client_for(api_id, api_hash, session_str)
+            self._client = client
+            try:
+                await client.connect()
+                if await client.is_user_authorized():
+                    self._register_handlers()
+                    await self._announce_status(TelegramStatus.AUTHORIZED, "connected")
+                else:
+                    await client.disconnect()
+                    self._client = None
+                    db = self._db()
+                    try:
+                        set_status(db, TelegramStatus.INIT_REQUIRED, "session present but not authorized")
+                    finally:
+                        db.close()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("telethon start failed", extra={"error": str(e)})
                 db = self._db()
                 try:
-                    set_status(db, TelegramStatus.INIT_REQUIRED, "session present but not authorized")
+                    set_status(db, TelegramStatus.ERROR, error=str(e)[:300])
                 finally:
                     db.close()
-        except Exception as e:  # noqa: BLE001
-            logger.warning("telethon start failed", extra={"error": str(e)})
+            return
+        # Credentials stored but no session yet: resume the authorization flow.
+        # If a phone number was already entered (e.g. mid-flow across a
+        # collector restart), request a fresh Telegram code so the UI can
+        # continue where it left off.
+        if phone:
+            self._phone = phone
+            try:
+                client = self._client_for(api_id, api_hash)
+                self._client = client
+                await client.connect()
+                await client.send_code_request(phone)
+                logger.info("telegram one-time code requested", extra={"phone_prefix": phone[:4]})
+                await self._announce_status(TelegramStatus.WAITING_CODE, "one-time code sent by Telegram")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("resume code request failed", extra={"error": str(e)})
+                db = self._db()
+                try:
+                    set_status(db, TelegramStatus.ERROR, error=str(e)[:300])
+                finally:
+                    db.close()
+        else:
             db = self._db()
             try:
-                set_status(db, TelegramStatus.ERROR, error=str(e)[:300])
+                set_status(db, TelegramStatus.WAITING_PHONE, "enter phone number")
             finally:
                 db.close()
 
@@ -443,10 +499,10 @@ class TelethonService(TelegramServiceProtocol):
         out: list[dict] = []
         async for dialog in self._client.iter_dialogs():
             entity = dialog.entity
-            ctype_skip = {"user"}
             d = _chat_to_dict(entity, dialog)
-            if d["type"] in ctype_skip:
+            if d["type"] in {"user"}:
                 continue
+            d["chat_id"] = await self._client.get_peer_id(entity)
             out.append(d)
             if len(out) >= 500:
                 break
@@ -455,7 +511,13 @@ class TelethonService(TelegramServiceProtocol):
     async def _get_history(self, chat_id: int, offset_id: int | None, limit: int) -> list[dict]:
         if self._client is None:
             return []
-        messages = await self._client.get_messages(chat_id, limit=limit, offset_id=offset_id)
+        # Telethon computes max(offset_id, max_id) internally; passing an
+        # explicit None for both raises TypeError, so omit the kwarg when there
+        # is no checkpoint yet.
+        if offset_id is not None:
+            messages = await self._client.get_messages(chat_id, limit=limit, offset_id=offset_id)
+        else:
+            messages = await self._client.get_messages(chat_id, limit=limit)
         return [_message_to_dict(m) for m in messages]
 
     def get_history_sync(self, chat_id: int, offset_id: int | None = None, limit: int = 100) -> list[dict]:

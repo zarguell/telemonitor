@@ -25,7 +25,8 @@ services:
       # the locally-active secrets must never be committed.
       TM_SECRET_KEY: ${TM_SECRET_KEY:-kiXwYpS3vN7qL9tB2mR4cE6gH8jA1dF5uZ0xW3oV6yS=}
       TM_AUTH_SECRET: ${TM_AUTH_SECRET:-local-dev-auth-secret-change-me}
-      TM_SIMULATE_TELEGRAM: "1"
+      # .env can override (TM_SIMULATE_TELEGRAM=0) for the real account
+      TM_SIMULATE_TELEGRAM: ${TM_SIMULATE_TELEGRAM:-1}
       TM_COLLECTOR_CONTROL_TOKEN: ${TM_COLLECTOR_CONTROL_TOKEN:-dev-control-token}
       TM_COLLECTOR_CONTROL_URL: http://collector:9001
       # E2E only: lets the alert worker reach the host webhook receiver.

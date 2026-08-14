@@ -143,7 +143,13 @@ def process_message(message_id: int):
             from ..audit import get_setting
 
             aliases = (get_setting(db, "aliases", {}) or {}).get("items", []) or []
-            inds = extract_indicators(msg.original_text, aliases)
+            # Entity-only URLs (Telegram link previews) are appended so the
+            # indicator pipeline sees them even though they are absent from
+            # the plain message text.
+            extraction_text = msg.original_text or ""
+            if msg.extra_text:
+                extraction_text = f"{extraction_text}\n{msg.extra_text}"
+            inds = extract_indicators(extraction_text, aliases)
             # replace indicators idempotently
             db.execute(delete(Indicator).where(Indicator.message_id == msg.id))
             for ind in inds:
@@ -210,7 +216,10 @@ def process_message(message_id: int):
             msg.state = MessageState.PROCESSED
             msg.process_error = None
             if source:
-                source.last_message_at = msg.sent_at or msg.ingested_at
+                # newest-wins: concurrent processing must not regress the
+                # "last received message" indicator to an older message
+                if not source.last_message_at or (msg.sent_at and msg.sent_at > source.last_message_at):
+                    source.last_message_at = msg.sent_at or msg.ingested_at
                 source.last_success_at = datetime.now(timezone.utc)
             db.commit()
         except Exception as e:  # noqa: BLE001
@@ -360,20 +369,23 @@ def fetch_backfill_page(source_id: int):
         from ..services.collector import persist_message  # noqa: PLC0415
 
         oldest = None
+        reached_start = False
+        persisted = 0
         for m in page:
+            # The page is newest-first; once a message predates the configured
+            # window, everything after it is out of scope — do not ingest it.
+            if source.backfill_start and m.get("date") and m["date"] < source.backfill_start:
+                reached_start = True
+                break
             persist_message(db, m)
+            persisted += 1
             if oldest is None or m["id"] < oldest:
                 oldest = m["id"]
-        source.backfill_done = (source.backfill_done or 0) + len(page)
+        source.backfill_done = (source.backfill_done or 0) + persisted
         source.backfill_checkpoint = oldest - 1 if oldest else None
         source.backfill_failures = 0
         db.commit()
 
-        reached_start = False
-        if source.backfill_start and page:
-            oldest_date = page[-1].get("date")
-            if oldest_date and oldest_date < source.backfill_start:
-                reached_start = True
         if len(page) < 100 or reached_start:
             _finish_backfill(db, source)
             return

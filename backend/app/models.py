@@ -227,6 +227,7 @@ class Message(Base):
     ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     original_text: Mapped[str | None] = mapped_column(Text)
+    extra_text: Mapped[str | None] = mapped_column(Text)  # entity-only URLs (link previews)
     normalized_text: Mapped[str | None] = mapped_column(Text)
     sender_id: Mapped[int | None] = mapped_column(BigInteger)
     reply_to_msg_id: Mapped[int | None] = mapped_column(BigInteger)

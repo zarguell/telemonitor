@@ -49,6 +49,7 @@ def persist_message(db: Session, m: dict) -> Message | None:
     if existing is not None:
         if m.get("edit_date") and m.get("text") != existing.original_text:
             existing.original_text = m.get("text")
+            existing.extra_text = "\n".join(m.get("urls") or []) or None
             existing.normalized_text = normalize_text(m.get("text"))
             existing.edited_at = m.get("edit_date")
             existing.content_hash = content_hash(m.get("text"))
@@ -69,6 +70,7 @@ def persist_message(db: Session, m: dict) -> Message | None:
         ingested_at=now,
         edited_at=m.get("edit_date"),
         original_text=m.get("text"),
+        extra_text="\n".join(m.get("urls") or []) or None,
         normalized_text=normalize_text(m.get("text")),
         sender_id=m.get("sender_id"),
         reply_to_msg_id=m.get("reply_to_msg_id"),
