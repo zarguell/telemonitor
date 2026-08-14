@@ -21,6 +21,10 @@ export default function Sources() {
   const [backfill, setBackfill] = useState("last_24h");
   const [customDate, setCustomDate] = useState("");
   const [label, setLabel] = useState("");
+  const [reindexing, setReindexing] = useState<Source | null>(null);
+  const [reindexMode, setReindexMode] = useState("last_24h");
+  const [reindexDate, setReindexDate] = useState("");
+  const [reindexBusy, setReindexBusy] = useState(false);
 
   const load = useCallback(async () => {
     let discError: string | null = null;
@@ -81,6 +85,26 @@ export default function Sources() {
       await load();
     } catch (e) {
       setError(e instanceof ApiError ? e.detail : String(e));
+    }
+  };
+
+  const startReindex = async () => {
+    if (!reindexing) return;
+    setReindexBusy(true);
+    setError(null);
+    try {
+      await api.patchSource(reindexing.id, {
+        backfill: {
+          mode: reindexMode,
+          ...(reindexMode === "custom" ? { custom_start: new Date(reindexDate).toISOString() } : {}),
+        },
+      });
+      setReindexing(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.detail : String(e));
+    } finally {
+      setReindexBusy(false);
     }
   };
 
@@ -198,6 +222,14 @@ export default function Sources() {
                   <button className={`btn btn-sm ${s.enabled ? "btn-ghost" : ""}`} onClick={() => toggle(s)}>
                     {s.enabled ? "Pause" : "Enable"}
                   </button>
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    disabled={s.status === "backfilling"}
+                    onClick={() => { setReindexing(s); setReindexMode("last_24h"); setReindexDate(""); }}
+                    title={s.status === "backfilling" ? "A backfill is already running" : "Fetch past messages as a one-shot job"}
+                  >
+                    {s.status === "backfilling" ? "Indexing…" : "Re-index history"}
+                  </button>
                   <button className="btn btn-sm btn-danger" onClick={() => void remove(s)}>
                     Remove
                   </button>
@@ -207,6 +239,42 @@ export default function Sources() {
           </tbody>
         </table>
       </div>
+
+      {reindexing && (
+        <div className="modal-backdrop" onClick={() => setReindexing(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Re-index history — “{reindexing.title}”</h2>
+            <p className="muted">
+              Runs a one-shot backfill job for the selected window. Live monitoring keeps
+              working; existing messages are re-ingested idempotently and will be re-processed.
+            </p>
+            <label>Historical window</label>
+            <select value={reindexMode} onChange={(e) => setReindexMode(e.target.value)}>
+              {BACKFILL_MODES.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+            {reindexMode === "custom" && (
+              <>
+                <label>Earliest timestamp</label>
+                <input type="datetime-local" value={reindexDate} onChange={(e) => setReindexDate(e.target.value)} />
+              </>
+            )}
+            <div className="btn-row" style={{ marginTop: 16 }}>
+              <button
+                className="btn"
+                disabled={reindexBusy || (reindexMode === "custom" && !reindexDate)}
+                onClick={() => void startReindex()}
+              >
+                {reindexBusy ? "Starting…" : "Start one-shot backfill"}
+              </button>
+              <button className="btn btn-ghost" onClick={() => setReindexing(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {adding && (
         <div className="modal-backdrop" onClick={() => setAdding(null)}>
