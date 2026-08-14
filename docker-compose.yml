@@ -31,6 +31,8 @@ services:
       TM_COLLECTOR_CONTROL_URL: http://collector:9001
       # E2E only: lets the alert worker reach the host webhook receiver.
       TM_ALLOWED_WEBHOOK_HOSTS: host.docker.internal
+      TM_MEDIA_STORE: local
+      TM_MEDIA_DIR: /data/media
       TM_REDACT_LOGGING: "1"
       TM_ENVIRONMENT: development
     depends_on:
@@ -41,6 +43,8 @@ services:
     build: ./backend
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     environment: *backend_env
+    volumes:
+      - mediadata:/data/media
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -54,6 +58,8 @@ services:
     build: ./backend
     command: python -m app.collector_entry
     environment: *backend_env
+    volumes:
+      - mediadata:/data/media
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -86,3 +92,4 @@ services:
 
 volumes:
   pgdata:
+  mediadata:

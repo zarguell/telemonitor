@@ -17,6 +17,7 @@ from sqlalchemy import select
 from .db import db_session
 from .jobs import (
     TASK_ALERT_CLOSE_DEDUPE,
+    TASK_MEDIA_BACKFILL,
     TASK_REPROCESS_STALE,
     TASK_RETENTION,
     TASK_SOURCE_RECONCILE,
@@ -63,6 +64,7 @@ def _scheduler_loop(stop: threading.Event) -> None:
             enqueue(TASK_SOURCE_RECONCILE)
             enqueue(TASK_WORKER_HEALTH)
             enqueue(TASK_ALERT_CLOSE_DEDUPE)
+            enqueue(TASK_MEDIA_BACKFILL)
         except Exception:  # noqa: BLE001
             logger.exception("maintenance scheduler failed")
         time.sleep(60)

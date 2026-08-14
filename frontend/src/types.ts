@@ -106,6 +106,9 @@ export interface SearchResult {
   forward_from_name?: string | null;
   sender_id?: number | null;
   media_type?: string | null;
+  media_stored?: boolean;
+  media_filename?: string | null;
+  media_content_type?: string | null;
 }
 
 export interface Alert {

@@ -95,7 +95,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    from .api import alerts, auditlog, auth, health, overview, rules, search, settings_api, sources, telegram, users
+    from .api import alerts, auditlog, auth, health, media, overview, rules, search, settings_api, sources, telegram, users
 
     for router in (
         health.router,
@@ -109,6 +109,7 @@ def create_app() -> FastAPI:
         users.router,
         auditlog.router,
         overview.router,
+        media.router,
     ):
         app.include_router(router, prefix="/api/v1")
 

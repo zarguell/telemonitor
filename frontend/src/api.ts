@@ -115,10 +115,12 @@ export const api = {
     request<Alert>("PATCH", `/alerts/${id}`, { state, note }),
 
   settings: () =>
-    request<{ retention_days: number; alert_destination: Record<string, unknown>; aliases: { alias: string; canonical?: string }[] }>(
-      "GET",
-      "/settings"
-    ),
+    request<{
+      retention_days: number;
+      alert_destination: Record<string, unknown>;
+      aliases: { alias: string; canonical?: string }[];
+      media_settings?: { store_media: boolean };
+    }>("GET", "/settings"),
   updateSettings: (body: Record<string, unknown>) => request("PUT", "/settings", body),
   testDestination: () => request<{ ok: boolean; status_code?: number | null; error?: string | null }>(
     "POST",

@@ -60,6 +60,8 @@ TASK_REALTIME_PROCESS = "realtime.process_message"
 TASK_ALERT_DELIVER = "alerts.deliver"
 TASK_ALERT_CLOSE_DEDUPE = "alerts.close_dedupe_windows"
 TASK_BACKFILL_PAGE = "backfill.fetch_page"
+TASK_MEDIA_DOWNLOAD = "media.download"
+TASK_MEDIA_BACKFILL = "media.backfill_missing"
 TASK_RETENTION = "maintenance.retention"
 TASK_REPROCESS_STALE = "maintenance.reprocess_stale"
 TASK_SOURCE_RECONCILE = "maintenance.source_reconcile"
@@ -423,6 +425,109 @@ def _finish_backfill(db: Session, source: Source) -> None:
     source.last_success_at = datetime.now(timezone.utc)
     db.commit()
     logger.info("backfill complete", extra={"source_id": source.id, "done": source.backfill_done})
+
+
+# ---------------------------------------------------------------------------
+# media (runs inside the collector process: needs the Telegram client)
+# ---------------------------------------------------------------------------
+
+# Media types eligible for storage (images only, per product scope).
+_IMAGE_DOC_TYPES = {"photo"}
+_ALLOWED_MEDIA_TYPES = {"photo", "document"}
+
+
+def _media_enabled(db: Session) -> bool:
+    from ..audit import get_setting
+
+    cfg = get_setting(db, "media_settings", {}) or {}
+    return bool((cfg or {}).get("store_media"))
+
+
+@app.task(name=TASK_MEDIA_DOWNLOAD, queue="media", retry=RETRY_STRATEGY)
+def download_media(message_id: int):
+    """Download and store a message's image via the MediaStore (idempotent)."""
+    from ..services.storage import MediaStoreError, get_media_store
+
+    db = db_session()
+    try:
+        msg = db.get(Message, message_id)
+        if msg is None or msg.media_stored:
+            return
+        if not _media_enabled(db):
+            return  # toggle off — metadata only
+        if msg.media_type not in _ALLOWED_MEDIA_TYPES:
+            return
+        meta = msg.media_metadata or {}
+        if msg.media_type == "document" and not str(meta.get("mime_type", "")).startswith("image/"):
+            return
+        from ..services.collector_state import get_service
+
+        service = get_service()
+        if service is None:
+            raise RuntimeError("telegram service not available in this process")
+        result = service.download_media_sync(msg.source.telegram_chat_id, msg.telegram_message_id)
+        if result is None:
+            logger.debug("no downloadable image", extra={"message_id": message_id})
+            return
+        data = result["data"]
+        import hashlib
+
+        digest = hashlib.sha256(data).hexdigest()
+        try:
+            get_media_store().put(digest, data, result.get("content_type"))
+        except MediaStoreError as e:
+            raise RuntimeError(f"media store failure: {e}") from e
+        msg.media_sha256 = digest
+        msg.media_content_type = result.get("content_type")
+        msg.media_size_bytes = result.get("size") or len(data)
+        msg.media_filename = result.get("filename")
+        msg.media_stored = True
+        db.commit()
+        logger.info("media stored", extra={"message_id": message_id, "bytes": len(data)})
+    except JobRetry:
+        raise
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        logger.warning("media download failed", extra={"message_id": message_id, "error": str(e)})
+        raise _db_retry(30)
+    finally:
+        db.close()
+
+
+@app.task(name=TASK_MEDIA_BACKFILL, queue="maintenance")
+def media_backfill_missing_task():
+    """Enqueue media downloads for already-ingested messages with media metadata."""
+    db = db_session()
+    try:
+        if not _media_enabled(db):
+            return
+        rows = list(
+            db.scalars(
+                select(Message.id)
+                .where(
+                    Message.media_type.in_(_ALLOWED_MEDIA_TYPES),
+                    Message.media_stored.is_(False),
+                    Message.state == MessageState.PROCESSED,
+                )
+                .limit(100)
+            )
+        )
+        for mid in rows:
+            enqueue(TASK_MEDIA_DOWNLOAD, message_id=mid)
+        if rows:
+            from ..audit import ACTION_MAINTENANCE_RUN, log_audit
+
+            log_audit(
+                db,
+                actor_user_id=None,
+                actor_username="system",
+                action=ACTION_MAINTENANCE_RUN,
+                object_type="messages",
+                detail={"job": "media_backfill", "queued": len(rows)},
+            )
+            logger.info("media backfill queued", extra={"count": len(rows)})
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------

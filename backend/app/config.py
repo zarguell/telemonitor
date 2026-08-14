@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     redact_logging: bool = True
 
     webhook_timeout_seconds: int = 10
+    # Media storage (images): backend + limits. The operator-facing enable
+    # toggle lives in app settings; these are deployment configuration.
+    media_store: str = "local"  # local (S3 can be added behind MediaStore)
+    media_dir: str = "/data/media"
+    media_max_bytes: int = 10 * 1024 * 1024
+
     # Explicit allowlist of webhook destination hostnames (comma-separated) that
     # bypass the private-range SSRF guard (test environments only; empty in production).
     allowed_webhook_hosts: str = ""

@@ -10,6 +10,7 @@ export default function Settings() {
   const [botChatId, setBotChatId] = useState("");
   const [destDirty, setDestDirty] = useState(false);
   const [aliases, setAliases] = useState<{ alias: string; canonical?: string }[]>([]);
+  const [storeMedia, setStoreMedia] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
   const [newUser, setNewUser] = useState({ username: "", password: "", role: "analyst" });
   const [error, setError] = useState<string | null>(null);
@@ -24,6 +25,7 @@ export default function Settings() {
       setWebhookUrl(String(s.alert_destination.url ?? ""));
       setBotChatId(String(s.alert_destination.chat_id ?? ""));
       setAliases(s.aliases ?? []);
+      setStoreMedia(Boolean(s.media_settings?.store_media));
       setUsers(u.items);
       setDestDirty(false);
       setError(null);
@@ -43,6 +45,7 @@ export default function Settings() {
       const body: Record<string, unknown> = {
         retention_days: retention,
         aliases: aliases.filter((a) => a.alias),
+        media_settings: { store_media: storeMedia },
       };
       // Only send the destination when the operator actually edited it — the
       // server never returns secrets, so a plain "Save" must not clobber them.
@@ -110,6 +113,27 @@ export default function Settings() {
         </p>
         <label>Retention period (days)</label>
         <input type="number" min={0} max={3650} value={retention} onChange={(e) => setRetention(Number(e.target.value))} style={{ width: 160 }} />
+      </div>
+
+      <div className="card">
+        <h2>Media storage</h2>
+        <p className="muted">
+          When enabled, the collector downloads and stores images from monitored
+          messages on the local media volume (abstracted behind a MediaStore, so
+          an object store can be plugged in later). Images are never analyzed —
+          this is storage and display only. Disabled = metadata only (PRD
+          default). Already-ingested messages are backfilled by the maintenance
+          worker within a minute.
+        </p>
+        <label className="checkline" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={storeMedia}
+            onChange={(e) => setStoreMedia(e.target.checked)}
+            style={{ width: "auto" }}
+          />
+          Store and display images from monitored messages
+        </label>
       </div>
 
       <div className="card">

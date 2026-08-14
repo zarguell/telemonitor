@@ -153,6 +153,9 @@ def search(
                 "forward_from_name": m.forward_from_name,
                 "sender_id": m.sender_id,
                 "media_type": m.media_type,
+                "media_stored": m.media_stored,
+                "media_filename": m.media_filename,
+                "media_content_type": m.media_content_type,
             }
         )
     log_audit(

@@ -32,6 +32,8 @@ class TelegramServiceProtocol:
 
     def get_history_sync(self, chat_id: int, offset_id: int | None = None, limit: int = 100) -> list[dict]: ...
 
+    def download_media_sync(self, chat_id: int, message_id: int) -> dict | None: ...
+
     # authorization flow --------------------------------------------------
     async def initialize(self, api_id: str, api_hash: str) -> dict: ...
 
@@ -524,6 +526,49 @@ class TelethonService(TelegramServiceProtocol):
         if self._loop is None or not self._loop.is_running():
             return asyncio.run(self._get_history(chat_id, offset_id, limit))
         fut = asyncio.run_coroutine_threadsafe(self._get_history(chat_id, offset_id, limit), self._loop)
+        return fut.result(timeout=120)
+
+    async def _download_media(self, chat_id: int, message_id: int) -> dict | None:
+        from telethon.tl.types import MessageMediaDocument, MessageMediaPhoto  # type: ignore
+
+        if self._client is None:
+            return None
+        msg = await self._client.get_messages(chat_id, ids=message_id)
+        if msg is None or msg.media is None:
+            return None
+        content_type = None
+        filename = None
+        size = None
+        if isinstance(msg.media, MessageMediaPhoto):
+            content_type = "image/jpeg"  # Telegram photos are stored as JPEG
+        elif isinstance(msg.media, MessageMediaDocument):
+            doc = msg.media.document
+            mime = getattr(doc, "mime_type", None) or ""
+            if not mime.startswith("image/"):
+                return None  # only images in scope
+            content_type = mime
+            size = getattr(doc, "size", None)
+            for attr in getattr(doc, "attributes", []) or []:
+                if getattr(attr, "file_name", None):
+                    filename = attr.file_name
+                    break
+        else:
+            return None
+        if not content_type:
+            return None
+        from ..config import settings
+
+        data = await self._client.download_media(msg, file=bytes)
+        if not data or len(data) > settings.media_max_bytes:
+            return None
+        if size is None:
+            size = len(data)
+        return {"data": data, "content_type": content_type, "filename": filename, "size": size}
+
+    def download_media_sync(self, chat_id: int, message_id: int) -> dict | None:
+        if self._loop is None or not self._loop.is_running():
+            return asyncio.run(self._download_media(chat_id, message_id))
+        fut = asyncio.run_coroutine_threadsafe(self._download_media(chat_id, message_id), self._loop)
         return fut.result(timeout=120)
 
     def set_new_message_callback(self, cb: NewMessageCallback) -> None:

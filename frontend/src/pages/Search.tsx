@@ -233,8 +233,19 @@ export default function Search() {
             </div>
             <div className="detail-row">
               <span className="k">Media</span>
-              <span>{detail.media_type ?? "none (metadata only)"}</span>
+              <span>
+                {detail.media_type ?? "none"}
+                {detail.media_filename ? ` · ${detail.media_filename}` : ""}
+                {detail.media_stored ? "" : " (metadata only — enable media storage in Settings to keep images)"}
+              </span>
             </div>
+            {detail.media_stored && (
+              <img
+                src={`/api/v1/media/${detail.id}`}
+                alt="stored message image"
+                style={{ maxWidth: "100%", maxHeight: 420, borderRadius: 8, marginTop: 8, border: "1px solid var(--border)" }}
+              />
+            )}
             {detail.permalink && (
               <div className="detail-row">
                 <span className="k">Telegram permalink</span>

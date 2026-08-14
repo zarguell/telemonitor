@@ -125,6 +125,26 @@ docker compose exec -T -e TM_DATABASE_URL=postgresql+psycopg://telemonitor:telem
 python3 scripts/e2e.py
 ```
 
+## Media storage (images)
+
+Images from monitored messages can optionally be stored and displayed — never
+analyzed (no OCR/vision in scope). Metadata-only remains the default (PRD 7.3).
+
+- **Toggle**: Settings → Media storage → "Store and display images…" (Administrators).
+  When enabled, the collector downloads images at ingest time and the
+  maintenance worker backfills already-ingested messages within a minute.
+- **Storage backend**: an abstracted `MediaStore` interface
+  (`backend/app/services/storage.py`) — today a local filesystem store keyed by
+  content SHA-256 (`TM_MEDIA_DIR`, mounted as a docker volume); an object store
+  (S3) can be added later by implementing the same interface and setting
+  `TM_MEDIA_STORE`.
+- **Serving**: authenticated `GET /api/v1/media/{message_id}` (analyst+),
+  content-type checked, cache-control private. The message detail views show
+  stored images.
+- **Retention**: purged media objects are deleted from the store alongside the
+  messages. Only `photo` and image documents (≤ `TM_MEDIA_MAX_BYTES`) are
+  stored; size is capped to avoid unbounded growth.
+
 ## Configuration (environment)
 
 | Variable | Purpose |

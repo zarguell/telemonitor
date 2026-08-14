@@ -24,10 +24,15 @@ class DestinationModel(BaseModel):
     chat_id: str | None = None
 
 
+class MediaSettings(BaseModel):
+    store_media: bool = False
+
+
 class SettingsUpdate(BaseModel):
     retention_days: int | None = Field(default=None, ge=0, le=3650)
     alert_destination: DestinationModel | None = None
     aliases: list[dict] | None = None  # [{"alias": ..., "canonical": ...}]
+    media_settings: MediaSettings | None = None
 
 
 @router.get("")
@@ -35,10 +40,12 @@ def get_settings(ctx: AuthContext = Depends(require_admin), db: Session = Depend
     retention = get_setting(db, "retention_days", {}) or {}
     dest = get_setting(db, "alert_destination", {}) or {}
     aliases = get_setting(db, "aliases", {}) or {}
+    media = get_setting(db, "media_settings", {}) or {}
     return {
         "retention_days": int(retention.get("days", 90)),
         "alert_destination": destination_summary(dest),
         "aliases": aliases.get("items", []),
+        "media_settings": {"store_media": bool((media or {}).get("store_media"))},
     }
 
 
@@ -56,6 +63,14 @@ def update_settings(
         cleaned = [a for a in body.aliases if isinstance(a, dict) and a.get("alias")]
         set_setting(db, "aliases", {"items": cleaned}, ctx.user.username)
         changed.append("aliases")
+    if body.media_settings is not None:
+        set_setting(
+            db,
+            "media_settings",
+            {"store_media": body.media_settings.store_media},
+            ctx.user.username,
+        )
+        changed.append("media_settings")
     if body.alert_destination is not None:
         d = body.alert_destination
         if d.type not in ("none", "webhook", "telegram_bot"):

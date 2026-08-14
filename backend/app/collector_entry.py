@@ -45,7 +45,7 @@ async def _heartbeat_loop(stop: threading.Event) -> None:
                     hb = WorkerHeartbeat(name="collector", kind="collector", queues="backfill")
                     db.add(hb)
                 hb.kind = "collector"
-                hb.queues = "backfill"
+                hb.queues = "backfill,media"
                 hb.status = "up"
                 hb.last_beat_at = datetime.now(timezone.utc)
                 tg = db.get(TelegramConfiguration, 1)
@@ -102,9 +102,11 @@ async def _run_control_server(stop: threading.Event) -> None:
 
 
 def _run_backfill_worker(stop: threading.Event) -> None:
-    logger.info("backfill worker starting (queue=backfill, concurrency=1)")
-    procrastinate_app.run_worker(queues=["backfill"], wait=True)
-    logger.info("backfill worker exited")
+    # backfill + media run inside the collector process because both need the
+    # live Telegram client; isolated from realtime/alerts/maintenance.
+    logger.info("backfill/media worker starting (queues=backfill,media)")
+    procrastinate_app.run_worker(queues=["backfill", "media"], wait=True)
+    logger.info("backfill/media worker exited")
 
 
 async def main() -> None:
