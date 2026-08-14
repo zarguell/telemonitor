@@ -22,7 +22,7 @@ services:
       TM_DATABASE_URL: postgresql+psycopg://telemonitor:telemonitor@db:5432/telemonitor
       # DEV-ONLY test value (see README "Development credentials"). Real deployments
       # MUST override TM_SECRET_KEY from secret management.
-      TM_SECRET_KEY: "kiXwYpS3vN7qL9tB2mR4cE6gH8jA1dF5uZ0xW3oV6yS="
+      TM_SECRET_KEY: "JqdAfKC8CSx7fsYSTxGrEscvJRJo5UpZxZUpP042fKc="
       TM_AUTH_SECRET: local-dev-auth-secret-change-me
       TM_SIMULATE_TELEGRAM: "1"
       TM_COLLECTOR_CONTROL_TOKEN: dev-control-token

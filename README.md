@@ -36,7 +36,7 @@ there are no real secrets committed:
 
 | Item | Value | Used for |
 |---|---|---|
-| `TM_SECRET_KEY` (compose) | `kiXwYpS3vN7qL9tB2mR4cE6gH8jA1dF5uZ0xW3oV6yS=` | Fernet at-rest encryption of API hash, Telethon session, bot tokens in the **local dev database only** |
+| `TM_SECRET_KEY` (compose) | per-environment (rotated; the original committed dev value is no longer used) | Fernet at-rest encryption of API hash, Telethon session, bot tokens in the **local dev database only** |
 | Demo users | `admin/admin123`, `operator/operator123`, `analyst/analyst123` | Local logins only |
 | Simulator OTP | `12345` | Simulated Telegram one-time code |
 
@@ -103,7 +103,6 @@ Telegram Configuration page to use a real account.
 docker compose exec -T -e TM_DATABASE_URL=postgresql+psycopg://telemonitor:telemonitor@db:5432/telemonitor_test \
   -e TM_PROCRASTINATE_DATABASE_URL=postgresql://telemonitor:telemonitor@db:5432/telemonitor_test \
   -e DATABASE_URL=postgresql://telemonitor:telemonitor@db:5432/telemonitor_test \
-  -e TM_SECRET_KEY=test-key-kiXwYpS3vN7qL9tB2mR4cE6gH8jA1dF5uZ0xW3oV6yS= \
   api python -m pytest tests/ -q
 
 # End-to-end test against the running stack (99 assertions):
