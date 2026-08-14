@@ -16,8 +16,7 @@ automated attribution is used anywhere in the pipeline.
 The operator documentation is an [Astro Starlight](https://starlight.astro.build/)
 site in [`website/`](website/), deployed to GitHub Pages at
 **https://zarguell.github.io/telemonitor/docs/** by
-`.github/workflows/deploy-docs.yml` (the same strategy as
-[Silo's project site](https://github.com/Silo-Server/siloserver.org)). Edit
+`.github/workflows/deploy-docs.yml`. Edit
 Markdown under `website/src/content/docs/docs/`; the site rebuilds and deploys
 on every push to `main` that touches `website/`.
 
