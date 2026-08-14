@@ -29,6 +29,45 @@ Queue layout (Procrastinate, backed by the same PostgreSQL):
 - `backfill` — paginated historical fetch + checkpoints (isolated in the collector process, concurrency 1)
 - `maintenance` — retention cleanup, stale-job recovery, source reconciliation, worker health
 
+## Development credentials (not secrets)
+
+Everything credential-like in this repository is a **development/test value** —
+there are no real secrets committed:
+
+| Item | Value | Used for |
+|---|---|---|
+| `TM_SECRET_KEY` (compose) | `kiXwYpS3vN7qL9tB2mR4cE6gH8jA1dF5uZ0xW3oV6yS=` | Fernet at-rest encryption of API hash, Telethon session, bot tokens in the **local dev database only** |
+| Demo users | `admin/admin123`, `operator/operator123`, `analyst/analyst123` | Local logins only |
+| Simulator OTP | `12345` | Simulated Telegram one-time code |
+
+**Do not use these values with real data.** Anyone with the repository can
+decrypt anything encrypted with the dev `TM_SECRET_KEY`, and the demo passwords
+are public. In production:
+
+- Set `TM_SECRET_KEY` from deployment secret management (generate with
+  `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`).
+- Never authorize a real Telegram account while running with the dev key —
+  its session would be recoverable by anyone with repo access.
+- Replace all demo users before exposing the deployment.
+
+See [Configuration](#configuration-environment) and the security properties
+below.
+
+## Screenshots
+
+All pages of the operator UI (captured against the local stack in simulated mode):
+
+| Page | Screenshot |
+|---|---|
+| Overview | ![Overview](docs/screenshots/overview.webp) |
+| Telegram Configuration | ![Telegram](docs/screenshots/telegram.webp) |
+| Sources | ![Sources](docs/screenshots/sources.webp) |
+| Rules | ![Rules](docs/screenshots/rules.webp) |
+| Alerts | ![Alerts](docs/screenshots/alerts.webp) |
+| Search | ![Search](docs/screenshots/search.webp) |
+| Settings | ![Settings](docs/screenshots/settings.webp) |
+| Audit Log | ![Audit Log](docs/screenshots/audit.webp) |
+
 ## Quick start (local Docker)
 
 ```bash
