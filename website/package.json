@@ -14,7 +14,7 @@
     "astro": "^7.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.6.0"
+    "typescript": "^7.0.0"
   },
   "engines": {
     "node": ">=20.0.0"
