@@ -11,6 +11,6 @@ PyJWT>=2.13,<2.14
 pydantic>=2.13,<2.14
 pydantic-settings>=2.15,<2.16
 httpx>=0.28,<0.29
-regex>=2024.9,<2025
+regex>=2026.7,<2027
 base58check>=1.0,<1.1
 pytest>=9.1.1,<9.2
