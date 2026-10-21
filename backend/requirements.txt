@@ -1,4 +1,4 @@
-fastapi>=0.156,<0.157
+fastapi>=0.157,<0.158
 uvicorn[standard]>=0.54,<0.55
 SQLAlchemy>=2.1,<2.2
 psycopg[binary]>=3.3,<3.4
