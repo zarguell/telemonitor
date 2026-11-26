@@ -40,7 +40,7 @@ passes them through to the Astro build.
 | API | Python FastAPI | Auth/RBAC, configuration, query API, orchestration |
 | Collector | Python Telethon (or built-in simulator) | Account connection, auth flow, discovery, new-message events |
 | Workers | Procrastinate (on PostgreSQL) | Realtime processing, alert delivery, backfill, maintenance |
-| Database | PostgreSQL 18 (single instance) | Operational state, messages, search, queue, rules, alerts, audits |
+| Database | PostgreSQL 19 (single instance) | Operational state, messages, search, queue, rules, alerts, audits |
 | Migrations | Alembic | Versioned schema |
 
 Queue layout (Procrastinate, backed by the same PostgreSQL):
@@ -102,6 +102,13 @@ cp .env.example .env
 #   TM_SECRET_KEY, TM_AUTH_SECRET, TM_COLLECTOR_CONTROL_TOKEN, TM_SEED_ADMIN_PASSWORD
 docker compose up -d --build
 ```
+
+> **Upgrading an existing stack?** The pinned `db` image is PostgreSQL 19, and
+> PostgreSQL data directories are major-version specific. Pulling the new image
+> onto a volume created by an older major is *not* an upgrade — `db` exits with
+> "there appears to be PostgreSQL data in /var/lib/postgresql/18/docker" and keeps
+> the whole stack down. Dump/restore (or `pg_upgrade`) first; see
+> [Upgrading PostgreSQL](website/src/content/docs/docs/installation.md#upgrading-postgresql).
 
 The initial **Administrator** account is created at first boot from
 `TM_SEED_ADMIN_PASSWORD` (username `admin`). Operator and Analyst accounts are

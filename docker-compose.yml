@@ -1,10 +1,13 @@
 services:
   db:
-    # SHA-pinned digest (PostgreSQL 18-alpine). Refresh with:
-    #   docker buildx imagetools inspect postgres:18-alpine
-    # NOTE: PG18 changed the volume layout to /var/lib/postgresql/<major>/docker
-    # (mount target is now /var/lib/postgresql, NOT .../data).
-    image: postgres:18-alpine@sha256:0115267ab5a509022df9319c77be365cef335adb71556c75f60f5360ee247e71
+    # SHA-pinned digest (PostgreSQL 19-alpine). Refresh with:
+    #   docker buildx imagetools inspect postgres:19-alpine
+    # NOTE: PG18+ keeps PGDATA at /var/lib/postgresql/<major>/docker and mounts the
+    # volume at /var/lib/postgresql (NOT .../data). A cluster from an older major is
+    # NOT upgraded by changing the tag: PG19 refuses to start on 18/docker. See
+    # "Upgrading PostgreSQL" in website/src/content/docs/docs/installation.md before
+    # bumping an existing stack.
+    image: postgres:19-alpine@sha256:cac45fb483caee3668946088a1c0532db89d5285c28dbfeac889b4068296e06f
     environment:
       POSTGRES_USER: telemonitor
       POSTGRES_PASSWORD: telemonitor
